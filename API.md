@@ -574,19 +574,210 @@ curl -X POST http://localhost:8070/admin/api/test \
 
 ---
 
-## Proxy Endpoints
+## FaaS/Serverless API Endpoints
 
-For persistent sandboxes with dev servers, the service provides proxy access:
+The FaaS API provides serverless function deployment with automatic lifecycle management, eliminating the need to manually handle sandbox creation and deletion.
 
-**GET/POST/PUT/DELETE** `/proxy/{sandbox_id}/*`
+### Deploy Function
 
-This forwards requests to the sandbox's internal dev server running on port 3000.
+Deploy a new serverless function with automatic container management.
+
+**POST** `/faas/deploy`
+
+#### Request Body
+```json
+{
+  "runtime": "bun|node|typescript",
+  "code": "string",
+  "files": "array (optional)",
+  "env_vars": "object (optional)",
+  "memory_limit_mb": "number (optional, default: 256)",
+  "entry_point": "string (optional)",
+  "auto_scale": "object (optional)",
+  "dev_server": "boolean (optional, default: true)"
+}
+```
+
+#### Response
+```json
+{
+  "deployment_id": "uuid",
+  "url": "string",
+  "sandbox_id": "uuid",
+  "status": "Running",
+  "created_at": "ISO 8601 timestamp",
+  "runtime": "string",
+  "memory_mb": "number"
+}
+```
 
 #### Example
-If you have a persistent sandbox with ID `fab81d7c-f665-432b-85c4-f9d380019709` running a web server:
+```bash
+curl -X POST http://localhost:8070/faas/deploy \
+  -H "Content-Type: application/json" \
+  -d '{
+    "runtime": "bun",
+    "code": "console.log(\"Hello FaaS!\");",
+    "entry_point": "bun dev",
+    "files": [
+      {
+        "path": "package.json",
+        "content": "{\"name\": \"my-function\", \"scripts\": {\"dev\": \"bun run --hot index.ts\"}}"
+      },
+      {
+        "path": "index.ts",
+        "content": "import express from \"express\"; const app = express(); app.get(\"/\", (req, res) => res.json({message: \"Hello from FaaS!\"})); app.listen(3000);"
+      }
+    ],
+    "auto_scale": {
+      "min_instances": 0,
+      "max_instances": 5,
+      "scale_down_after_minutes": 10
+    }
+  }'
+```
 
+---
+
+### List Deployments
+
+List all active FaaS deployments.
+
+**GET** `/faas/deployments`
+
+#### Response
+```json
+[
+  {
+    "deployment_id": "uuid",
+    "url": "string",
+    "sandbox_id": "uuid",
+    "status": "Running",
+    "created_at": "ISO 8601 timestamp",
+    "runtime": "string",
+    "memory_mb": "number"
+  }
+]
+```
+
+#### Example
+```bash
+curl http://localhost:8070/faas/deployments
+```
+
+---
+
+### Get Deployment Info
+
+Get information about a specific deployment.
+
+**GET** `/faas/deployments/{deployment_id}`
+
+#### Response
+```json
+{
+  "deployment_id": "uuid",
+  "url": "string",
+  "sandbox_id": "uuid",
+  "status": "Running",
+  "created_at": "ISO 8601 timestamp",
+  "runtime": "string",
+  "memory_mb": "number"
+}
+```
+
+#### Example
+```bash
+curl http://localhost:8070/faas/deployments/4a5fded3-e704-40fa-84a5-fda2bc7ea548
+```
+
+---
+
+### Update Files in Deployment
+
+Update files in a running deployment with automatic dev server restart.
+
+**PUT** `/faas/deployments/{deployment_id}/files`
+
+#### Request Body
+```json
+{
+  "files": [
+    {
+      "path": "string",
+      "content": "string",
+      "executable": "boolean (optional)"
+    }
+  ],
+  "restart_dev_server": "boolean (optional, default: true)"
+}
+```
+
+#### Response
+- Status: `200 OK` on success
+- Status: `404 Not Found` if deployment doesn't exist
+
+#### Example
+```bash
+curl -X PUT http://localhost:8070/faas/deployments/4a5fded3-e704-40fa-84a5-fda2bc7ea548/files \
+  -H "Content-Type: application/json" \
+  -d '{
+    "files": [
+      {
+        "path": "index.ts",
+        "content": "import express from \"express\"; const app = express(); app.get(\"/\", (req, res) => res.json({message: \"Updated via API!\", timestamp: new Date().toISOString()})); app.listen(3000);"
+      }
+    ],
+    "restart_dev_server": true
+  }'
+```
+
+---
+
+### Undeploy Function
+
+Remove a deployment and clean up all resources.
+
+**DELETE** `/faas/deployments/{deployment_id}`
+
+#### Response
+- Status: `204 No Content` on success
+- Status: `404 Not Found` if deployment doesn't exist
+
+#### Example
+```bash
+curl -X DELETE http://localhost:8070/faas/deployments/4a5fded3-e704-40fa-84a5-fda2bc7ea548
+```
+
+---
+
+## Proxy Endpoints
+
+The service provides proxy access to both sandboxes and FaaS deployments:
+
+### Sandbox Proxy
+**GET/POST/PUT/DELETE** `/proxy/{sandbox_id}/*`
+
+Forwards requests to the sandbox's internal dev server running on port 3000.
+
+#### Example
 ```bash
 curl http://localhost:8070/proxy/fab81d7c-f665-432b-85c4-f9d380019709/
+```
+
+### FaaS Proxy
+**GET/POST/PUT/DELETE** `/faas/{deployment_id}/*`
+
+Forwards requests to the FaaS deployment's web service.
+
+#### Example
+```bash
+# Access the root endpoint of your FaaS deployment
+curl http://localhost:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548/
+
+# Access specific API endpoints
+curl http://localhost:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548/api/status
+curl http://localhost:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548/health
 ```
 
 ---
@@ -662,6 +853,9 @@ All limits can be customized per sandbox:
 3. **Monitor resource usage**: Use admin endpoints to monitor system health
 4. **Handle errors gracefully**: Always check response status codes
 5. **Use persistent mode judiciously**: Only use for actual long-running services
+6. **Prefer FaaS for web services**: Use the FaaS API for deploying web applications and APIs
+7. **Use file updates for development**: Leverage the file update API for iterative development
+8. **Set appropriate auto-scale settings**: Configure reasonable scale-down timeouts for your use case
 
 ---
 

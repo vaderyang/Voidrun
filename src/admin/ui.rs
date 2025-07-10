@@ -578,6 +578,7 @@ pub const ADMIN_UI_HTML: &str = r#"<!DOCTYPE html>
             <nav class="nav-tabs">
                 <button class="nav-tab active" onclick="showTab('dashboard')">Dashboard</button>
                 <button class="nav-tab" onclick="showTab('sandboxes')">Sandboxes</button>
+                <button class="nav-tab" onclick="showTab('faas')">FaaS Deployments</button>
                 <button class="nav-tab" onclick="showTab('logs')">Logs</button>
                 <button class="nav-tab" onclick="showTab('api-docs')">API Docs</button>
             </nav>
@@ -663,6 +664,34 @@ pub const ADMIN_UI_HTML: &str = r#"<!DOCTYPE html>
                     <tbody id="sandboxes-tbody">
                         <tr>
                             <td colspan="8" class="loading">Loading sandboxes...</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- FaaS Deployments Tab -->
+        <div id="faas" class="tab-content">
+            <div class="sandbox-list">
+                <div class="sandbox-header">
+                    <h3>FaaS Deployments</h3>
+                    <button class="refresh-btn" onclick="refreshFaasDeployments()">🔄 Refresh</button>
+                </div>
+                <table class="sandbox-table">
+                    <thead>
+                        <tr>
+                            <th>Deployment ID</th>
+                            <th>Status</th>
+                            <th>Runtime</th>
+                            <th>Created</th>
+                            <th>Memory</th>
+                            <th>Proxy URL</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody id="faas-tbody">
+                        <tr>
+                            <td colspan="7" class="loading">Loading FaaS deployments...</td>
                         </tr>
                     </tbody>
                 </table>
@@ -771,6 +800,9 @@ pub const ADMIN_UI_HTML: &str = r#"<!DOCTYPE html>
                 case 'sandboxes':
                     loadSandboxes();
                     break;
+                case 'faas':
+                    loadFaasDeployments();
+                    break;
                 case 'logs':
                     loadLogs();
                     break;
@@ -852,6 +884,107 @@ pub const ADMIN_UI_HTML: &str = r#"<!DOCTYPE html>
 
         async function refreshSandboxes() {
             await loadSandboxes();
+        }
+
+        // FaaS Deployment functions
+        async function loadFaasDeployments() {
+            try {
+                const response = await fetch('/faas/deployments');
+                const deployments = await response.json();
+                
+                const tbody = document.getElementById('faas-tbody');
+                tbody.innerHTML = '';
+                
+                if (deployments.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="7" class="loading">No active deployments</td></tr>';
+                    return;
+                }
+                
+                deployments.forEach(deployment => {
+                    const row = document.createElement('tr');
+                    const createdDate = new Date(deployment.created_at).toLocaleString();
+                    row.innerHTML = `
+                        <td title="${deployment.deployment_id}">${deployment.deployment_id.substring(0, 8)}...</td>
+                        <td><span class="status-badge status-${deployment.status.toLowerCase()}">${deployment.status}</span></td>
+                        <td>${deployment.runtime}</td>
+                        <td>${createdDate}</td>
+                        <td>${deployment.memory_mb}MB</td>
+                        <td>
+                            <a href="${deployment.url}" target="_blank" class="proxy-link">🔗 Open App</a>
+                        </td>
+                        <td>
+                            <button class="action-btn btn-view" onclick="showDeploymentDetails('${deployment.deployment_id}')">View</button>
+                            <button class="action-btn btn-logs" onclick="showDeploymentLogs('${deployment.deployment_id}')">Logs</button>
+                            <button class="action-btn btn-stop" onclick="undeployFunction('${deployment.deployment_id}')">Undeploy</button>
+                        </td>
+                    `;
+                    tbody.appendChild(row);
+                });
+                
+            } catch (error) {
+                console.error('Failed to load FaaS deployments:', error);
+            }
+        }
+
+        async function refreshFaasDeployments() {
+            await loadFaasDeployments();
+        }
+
+        async function showDeploymentDetails(deploymentId) {
+            try {
+                const response = await fetch(`/faas/deployments/${deploymentId}`);
+                const deployment = await response.json();
+                
+                const detailsDiv = document.getElementById('sandbox-details');
+                detailsDiv.innerHTML = `
+                    <p><strong>Deployment ID:</strong> ${deployment.deployment_id}</p>
+                    <p><strong>Sandbox ID:</strong> ${deployment.sandbox_id}</p>
+                    <p><strong>Status:</strong> ${deployment.status}</p>
+                    <p><strong>Runtime:</strong> ${deployment.runtime}</p>
+                    <p><strong>Created:</strong> ${new Date(deployment.created_at).toLocaleString()}</p>
+                    <p><strong>Memory Limit:</strong> ${deployment.memory_mb}MB</p>
+                    <p><strong>URL:</strong> <a href="${deployment.url}" target="_blank">${deployment.url}</a></p>
+                `;
+                
+                document.getElementById('sandbox-modal').style.display = 'block';
+            } catch (error) {
+                console.error('Failed to load deployment details:', error);
+            }
+        }
+
+        function showDeploymentLogs(deploymentId) {
+            // FaaS deployments use the underlying sandbox for logs
+            // We need to get the sandbox ID first
+            fetch(`/faas/deployments/${deploymentId}`)
+                .then(response => response.json())
+                .then(deployment => {
+                    showSandboxLogs(deployment.sandbox_id);
+                })
+                .catch(error => {
+                    console.error('Failed to get deployment sandbox ID:', error);
+                });
+        }
+
+        async function undeployFunction(deploymentId) {
+            if (!confirm(`Are you sure you want to undeploy function ${deploymentId}?`)) {
+                return;
+            }
+            
+            try {
+                const response = await fetch(`/faas/deployments/${deploymentId}`, {
+                    method: 'DELETE'
+                });
+                
+                if (response.ok) {
+                    alert('Function undeployed successfully');
+                    await loadFaasDeployments();
+                } else {
+                    alert('Failed to undeploy function');
+                }
+            } catch (error) {
+                console.error('Failed to undeploy function:', error);
+                alert('Failed to undeploy function');
+            }
         }
 
         async function showSandboxDetails(sandboxId) {
@@ -1090,6 +1223,9 @@ pub const ADMIN_UI_HTML: &str = r#"<!DOCTYPE html>
                         break;
                     case 'sandboxes':
                         loadSandboxes();
+                        break;
+                    case 'faas':
+                        loadFaasDeployments();
                         break;
                     case 'logs':
                         loadLogs();

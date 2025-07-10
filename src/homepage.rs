@@ -320,11 +320,11 @@ const HOMEPAGE_HTML: &str = r##"<!DOCTYPE html>
 
     <section class="hero">
         <div class="container">
-            <h1>Secure Code Execution</h1>
-            <p>Run TypeScript, Node.js, and Bun code in isolated sandboxes with enterprise-grade security and monitoring.</p>
+            <h1>Serverless Sandbox Platform</h1>
+            <p>Deploy functions, run TypeScript, Node.js, and Bun code with hot reload, file updates, and automatic scaling in isolated sandboxes.</p>
             <div class="cta-buttons">
                 <a href="/admin" class="cta-button cta-primary">Admin Dashboard</a>
-                <a href="#api" class="cta-button cta-secondary">View API Docs</a>
+                <a href="#api" class="cta-button cta-secondary">Try FaaS API</a>
             </div>
         </div>
     </section>
@@ -363,6 +363,18 @@ const HOMEPAGE_HTML: &str = r##"<!DOCTYPE html>
                     <div class="feature-icon">🔄</div>
                     <h3 class="feature-title">Persistent Mode</h3>
                     <p class="feature-description">Long-running sandboxes for interactive development and testing environments.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🚀</div>
+                    <h3 class="feature-title">FaaS/Serverless</h3>
+                    <p class="feature-description">Deploy functions with automatic lifecycle management, hot reload, and unique URLs.</p>
+                </div>
+                
+                <div class="feature-card">
+                    <div class="feature-icon">🔄</div>
+                    <h3 class="feature-title">Live File Updates</h3>
+                    <p class="feature-description">Update code in running deployments with instant hot reload support.</p>
                 </div>
                 
                 <div class="feature-card">
@@ -405,24 +417,32 @@ const HOMEPAGE_HTML: &str = r##"<!DOCTYPE html>
             
             <div class="api-example">
                 <pre>
-# Create a new sandbox
-POST /sandbox
+# Deploy a serverless function
+POST /faas/deploy
 {
   "runtime": "bun",
-  "code": "console.log('Hello World');",
-  "mode": "persistent",
-  "dev_server": true
+  "files": [
+    {
+      "path": "package.json",
+      "content": "{\"scripts\": {\"dev\": \"bun run --hot index.ts\"}}"
+    },
+    {
+      "path": "index.ts", 
+      "content": "import express from 'express'; const app = express(); app.get('/', (req, res) => res.json({message: 'Hello FaaS!'})); app.listen(3000);"
+    }
+  ],
+  "entry_point": "bun dev"
 }
 
-# Execute code
-POST /sandbox/{id}/execute
+# Access your deployed service
+GET /faas/{deployment_id}/
+
+# Update files with hot reload
+PUT /faas/deployments/{deployment_id}/files
 {
-  "runtime": "bun",
-  "code": "console.log('Running in sandbox');"
+  "files": [{"path": "index.ts", "content": "..."}],
+  "restart_dev_server": true
 }
-
-# Get sandbox status
-GET /sandbox/{id}
 </pre>
             </div>
         </div>

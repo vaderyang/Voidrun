@@ -1,0 +1,29 @@
+{
+  "runtime": "bun",
+  "code": "console.log('FaaS deployment starting...');",
+  "entry_point": "bun dev",
+  "memory_limit_mb": 256,
+  "env_vars": {
+    "NODE_ENV": "production",
+    "PORT": "3000"
+  },
+  "files": [
+    {
+      "path": "package.json",
+      "content": "{\n  \"name\": \"faas-example\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"dev\": \"bun run --hot src/index.ts\",\n    \"start\": \"bun run src/index.ts\"\n  },\n  \"dependencies\": {\n    \"express\": \"^4.18.2\"\n  },\n  \"devDependencies\": {\n    \"@types/express\": \"^4.17.17\",\n    \"typescript\": \"^5.0.0\"\n  }\n}"
+    },
+    {
+      "path": "src/index.ts",
+      "content": "import express from 'express';\n\nconst app = express();\nconst PORT = process.env.PORT || 3000;\n\napp.get('/', (req, res) => {\n  res.json({ \n    message: 'Hello from FaaS! 🚀',\n    timestamp: new Date().toISOString(),\n    deployment: 'serverless',\n    runtime: 'bun'\n  });\n});\n\napp.get('/api/status', (req, res) => {\n  res.json({ \n    status: 'healthy',\n    uptime: process.uptime(),\n    memory: process.memoryUsage(),\n    version: '1.0.0'\n  });\n});\n\napp.get('/api/echo/:message', (req, res) => {\n  res.json({\n    echo: req.params.message,\n    timestamp: new Date().toISOString(),\n    headers: req.headers\n  });\n});\n\napp.listen(PORT, '0.0.0.0', () => {\n  console.log(`🚀 FaaS service running on http://0.0.0.0:${PORT}`);\n});"
+    },
+    {
+      "path": "tsconfig.json",
+      "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2020\",\n    \"module\": \"ESNext\",\n    \"lib\": [\"ES2020\"],\n    \"moduleResolution\": \"node\",\n    \"allowJs\": true,\n    \"outDir\": \"./dist\",\n    \"rootDir\": \"./src\",\n    \"strict\": true,\n    \"esModuleInterop\": true,\n    \"skipLibCheck\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"resolveJsonModule\": true,\n    \"isolatedModules\": true,\n    \"noEmit\": true\n  },\n  \"include\": [\"src/**/*\"]\n}"
+    }
+  ],
+  "auto_scale": {
+    "min_instances": 0,
+    "max_instances": 3,
+    "scale_down_after_minutes": 5
+  }
+}

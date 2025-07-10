@@ -1,0 +1,9 @@
+{
+  "files": [
+    {
+      "path": "index.ts",
+      "content": "import express from 'express';\n\nconst app = express();\nconst PORT = process.env.PORT || 3000;\n\napp.get('/', (req, res) => {\n  res.json({ \n    message: '🚀 UPDATED! Hot reload is working! ⚡',\n    timestamp: new Date().toISOString(),\n    runtime: 'bun with live updates',\n    version: '2.0.0',\n    updated: true\n  });\n});\n\napp.get('/health', (req, res) => {\n  res.json({ \n    status: 'healthy',\n    uptime: process.uptime(),\n    pid: process.pid,\n    updated: 'YES! File update worked!'\n  });\n});\n\napp.get('/new-endpoint', (req, res) => {\n  res.json({\n    message: 'This is a brand new endpoint added via file update!',\n    timestamp: new Date().toISOString(),\n    cool: true\n  });\n});\n\napp.listen(PORT, '0.0.0.0', () => {\n  console.log(`🔥⚡ UPDATED Bun server running on http://0.0.0.0:${PORT}`);\n});"
+    }
+  ],
+  "restart_dev_server": true
+}

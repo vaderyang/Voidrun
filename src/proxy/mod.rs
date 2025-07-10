@@ -68,6 +68,7 @@ impl PortAllocator {
 pub struct ProxyState {
     pub client: reqwest::Client,
     pub port_allocator: PortAllocator,
+    pub faas_manager: Option<Arc<crate::faas::FaasManager>>,
 }
 
 impl ProxyState {
@@ -75,7 +76,13 @@ impl ProxyState {
         Self {
             client: reqwest::Client::new(),
             port_allocator: PortAllocator::new(start_port),
+            faas_manager: None,
         }
+    }
+    
+    pub fn with_faas_manager(mut self, faas_manager: Arc<crate::faas::FaasManager>) -> Self {
+        self.faas_manager = Some(faas_manager);
+        self
     }
 }
 
@@ -256,15 +263,42 @@ pub async fn unified_proxy_handler(
 ) -> Result<Response, StatusCode> {
     let full_path = path.0;
     
-    // Extract sandbox_id and remainder from the full path
+    // Extract parts from the full path
     let path_parts: Vec<&str> = full_path.split('/').filter(|s| !s.is_empty()).collect();
     
-    if path_parts.len() < 2 || path_parts[0] != "proxy" {
+    if path_parts.len() < 2 {
         return Err(StatusCode::NOT_FOUND);
     }
     
-    let sandbox_id = path_parts[1];
-    let remainder_parts = &path_parts[2..];
+    let (sandbox_id, remainder_parts) = match path_parts[0] {
+        "proxy" => {
+            // Direct sandbox proxy: /proxy/{sandbox_id}/...
+            if path_parts.len() < 2 {
+                return Err(StatusCode::NOT_FOUND);
+            }
+            (path_parts[1].to_string(), &path_parts[2..])
+        }
+        "faas" => {
+            // FaaS deployment proxy: /faas/{deployment_id}/...
+            if path_parts.len() < 2 {
+                return Err(StatusCode::NOT_FOUND);
+            }
+            let deployment_id = path_parts[1];
+            
+            // Get sandbox ID from FaaS manager
+            if let Some(ref faas_manager) = state.faas_manager {
+                if let Some(sandbox_id) = faas_manager.get_deployment_for_proxy(deployment_id).await {
+                    (sandbox_id, &path_parts[2..])
+                } else {
+                    return Err(StatusCode::NOT_FOUND);
+                }
+            } else {
+                return Err(StatusCode::NOT_FOUND);
+            }
+        }
+        _ => return Err(StatusCode::NOT_FOUND),
+    };
+    
     let target_path = if remainder_parts.is_empty() {
         "/".to_string()
     } else {
@@ -272,11 +306,11 @@ pub async fn unified_proxy_handler(
     };
     
     // Try to get port from port allocator first
-    let port = if let Some(port) = state.port_allocator.get_port(sandbox_id).await {
+    let port = if let Some(port) = state.port_allocator.get_port(&sandbox_id).await {
         port
     } else {
         // Fallback: inspect Docker container to find mapped port
-        get_container_port(sandbox_id).await
+        get_container_port(&sandbox_id).await
             .ok_or(StatusCode::NOT_FOUND)?
     };
 
@@ -334,6 +368,122 @@ pub async fn unified_proxy_handler(
 /// Create the proxy router
 pub fn create_proxy_router(state: ProxyState) -> Router {
     Router::new()
-        .route("/proxy/*path", any(unified_proxy_handler))
+        .route("/proxy/:sandbox_id", any(proxy_handler_root))
+        .route("/proxy/:sandbox_id/*remainder", any(proxy_handler))
+        .route("/faas/:deployment_id", any(faas_proxy_handler_root))
+        .route("/faas/:deployment_id/*remainder", any(faas_proxy_handler))
         .with_state(state)
+}
+
+/// FaaS proxy handler for root path
+pub async fn faas_proxy_handler_root(
+    Path(deployment_id): Path<String>,
+    State(state): State<ProxyState>,
+    req: Request,
+) -> Result<Response, StatusCode> {
+    // Get sandbox ID from FaaS manager
+    let sandbox_id = if let Some(ref faas_manager) = state.faas_manager {
+        faas_manager.get_deployment_for_proxy(&deployment_id).await
+            .ok_or(StatusCode::NOT_FOUND)?
+    } else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    // Get port
+    let port = if let Some(port) = state.port_allocator.get_port(&sandbox_id).await {
+        port
+    } else {
+        get_container_port(&sandbox_id).await
+            .ok_or(StatusCode::NOT_FOUND)?
+    };
+
+    // Build target URL
+    let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
+    let target_url = format!("http://127.0.0.1:{}/{}", port, query);
+    
+    forward_request(state, req, target_url).await
+}
+
+/// FaaS proxy handler with path
+pub async fn faas_proxy_handler(
+    Path((deployment_id, remainder)): Path<(String, String)>,
+    State(state): State<ProxyState>,
+    req: Request,
+) -> Result<Response, StatusCode> {
+    // Get sandbox ID from FaaS manager
+    let sandbox_id = if let Some(ref faas_manager) = state.faas_manager {
+        faas_manager.get_deployment_for_proxy(&deployment_id).await
+            .ok_or(StatusCode::NOT_FOUND)?
+    } else {
+        return Err(StatusCode::NOT_FOUND);
+    };
+
+    // Get port
+    let port = if let Some(port) = state.port_allocator.get_port(&sandbox_id).await {
+        port
+    } else {
+        get_container_port(&sandbox_id).await
+            .ok_or(StatusCode::NOT_FOUND)?
+    };
+
+    // Build target URL
+    let target_path = if remainder.starts_with('/') { &remainder } else { &format!("/{}", remainder) };
+    let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
+    let target_url = format!("http://127.0.0.1:{}{}{}", port, target_path, query);
+    
+    forward_request(state, req, target_url).await
+}
+
+/// Helper function to forward requests
+async fn forward_request(
+    state: ProxyState,
+    req: Request,
+    target_url: String,
+) -> Result<Response, StatusCode> {
+    let method = req.method().clone();
+    let headers = req.headers().clone();
+    let body = axum::body::to_bytes(req.into_body(), usize::MAX)
+        .await
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    
+    let method_str = method.as_str();
+    let mut request_builder = state.client.request(
+        reqwest::Method::from_bytes(method_str.as_bytes()).unwrap(), 
+        &target_url
+    );
+    
+    // Copy headers
+    for (name, value) in headers {
+        if let Some(name) = name {
+            if let Ok(value_str) = value.to_str() {
+                request_builder = request_builder.header(name.as_str(), value_str);
+            }
+        }
+    }
+    
+    // Send request
+    let response = request_builder
+        .body(body)
+        .send()
+        .await
+        .map_err(|e| {
+            error!("Proxy request failed: {}", e);
+            StatusCode::BAD_GATEWAY
+        })?;
+    
+    // Build response
+    let mut response_builder = Response::builder()
+        .status(response.status().as_u16());
+    
+    for (name, value) in response.headers() {
+        if let Ok(value_str) = value.to_str() {
+            response_builder = response_builder.header(name.as_str(), value_str);
+        }
+    }
+    
+    let body = response.bytes().await.map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    
+    response_builder
+        .body(axum::body::Body::from(body))
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }

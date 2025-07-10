@@ -22,6 +22,7 @@ use std::net::SocketAddr;
 mod admin;
 mod api;
 mod config;
+mod faas;
 mod homepage;
 mod proxy;
 mod runtime;
@@ -30,6 +31,7 @@ mod sandbox;
 use admin::create_admin_router;
 use api::create_router;
 use config::Config;
+use faas::handlers::{FaasState, create_faas_router};
 use homepage::homepage;
 use proxy::{ProxyState, create_proxy_router};
 use sandbox::manager::SandboxManager;
@@ -136,8 +138,16 @@ async fn main() -> Result<()> {
     let sandbox_manager = SandboxManager::new(config.sandbox.backend.clone()).await?;
     let app_state = Arc::new(RwLock::new(sandbox_manager));
     
+    // Create FaaS state
+    let base_url = format!("http://{}:{}", config.server.host, config.server.port);
+    let faas_state = FaasState::new(app_state.clone(), base_url);
+    
+    // Start FaaS cleanup task
+    faas_state.faas_manager.start_cleanup_task().await;
+    
     // Create proxy state for handling sandbox web services
-    let proxy_state = ProxyState::new(8080); // Start port allocation from 8080
+    let proxy_state = ProxyState::new(8080) // Start port allocation from 8080
+        .with_faas_manager(faas_state.faas_manager.clone());
 
     let cors = CorsLayer::new()
         .allow_methods(Any)
@@ -145,12 +155,14 @@ async fn main() -> Result<()> {
         .allow_origin(Any);
 
     let api_router = create_router(app_state.clone());
+    let faas_router = create_faas_router(faas_state);
     let proxy_router = create_proxy_router(proxy_state);
     let admin_router = create_admin_router(app_state.clone());
     
     let app = Router::new()
         .route("/", axum::routing::get(homepage))
         .merge(api_router)
+        .merge(faas_router)
         .merge(proxy_router)
         .merge(admin_router)
         .layer(

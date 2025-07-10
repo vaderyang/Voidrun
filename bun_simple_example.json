@@ -1,0 +1,25 @@
+{
+  "runtime": "bun",
+  "code": "console.log('Simple bun example...');",
+  "entry_point": "bun dev",
+  "memory_limit_mb": 256,
+  "env_vars": {
+    "NODE_ENV": "development",
+    "PORT": "3000"
+  },
+  "files": [
+    {
+      "path": "package.json",
+      "content": "{\n  \"name\": \"simple-bun-example\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"dev\": \"bun run --hot index.ts\",\n    \"start\": \"bun run index.ts\"\n  },\n  \"dependencies\": {\n    \"express\": \"^4.18.2\"\n  },\n  \"devDependencies\": {\n    \"@types/express\": \"^4.17.17\",\n    \"typescript\": \"^5.0.0\"\n  }\n}"
+    },
+    {
+      "path": "index.ts",
+      "content": "import express from 'express';\n\nconst app = express();\nconst PORT = process.env.PORT || 3000;\n\napp.get('/', (req, res) => {\n  res.json({ \n    message: 'Simple Bun Dev Server! 🔥',\n    timestamp: new Date().toISOString(),\n    runtime: 'bun with hot reload',\n    version: '1.0.0'\n  });\n});\n\napp.get('/health', (req, res) => {\n  res.json({ \n    status: 'healthy',\n    uptime: process.uptime(),\n    pid: process.pid\n  });\n});\n\napp.listen(PORT, '0.0.0.0', () => {\n  console.log(`🔥 Simple Bun server running on http://0.0.0.0:${PORT}`);\n});"
+    }
+  ],
+  "auto_scale": {
+    "min_instances": 0,
+    "max_instances": 2,
+    "scale_down_after_minutes": 3
+  }
+}

@@ -332,57 +332,85 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     }
 
     async fn execute_persistent_container(&self, container_id: &str, request: &SandboxRequest, start_time: Instant) -> Result<SandboxResponse> {
-        // Setup React dev environment if dev_server is requested
-        if request.dev_server.unwrap_or(false) {
-            self.setup_react_dev_environment(container_id, request).await?;
-        } else {
-            // Create additional files if provided
-            if let Some(files) = &request.files {
-                for file in files {
-                    let file_cmd = if file.path.starts_with('/') {
-                        format!("echo '{}' > {}", file.content.replace('\'', "'\"'\"'"), file.path)
-                    } else {
-                        format!("echo '{}' > /sandbox/{}", file.content.replace('\'', "'\"'\"'"), file.path)
-                    };
+        // Create additional files if provided
+        if let Some(files) = &request.files {
+            // Create directories for nested files
+            let mut directories = std::collections::HashSet::new();
+            for file in files {
+                if let Some(parent) = std::path::Path::new(&file.path).parent() {
+                    if !parent.as_os_str().is_empty() && parent != std::path::Path::new(".") {
+                        directories.insert(format!("/sandbox/{}", parent.display()));
+                    }
+                }
+            }
+            
+            // Create directories
+            for dir in directories {
+                let mkdir_cmd = format!("mkdir -p {}", dir);
+                let mkdir_exec_options = CreateExecOptions {
+                    cmd: Some(vec!["sh", "-c", &mkdir_cmd]),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    ..Default::default()
+                };
+                let mkdir_exec = self.docker.create_exec(container_id, mkdir_exec_options).await?;
+                if let Err(e) = self.docker.start_exec(&mkdir_exec.id, None).await {
+                    tracing::error!("Failed to create directory {}: {}", dir, e);
+                }
+            }
 
-                    let exec_options = CreateExecOptions {
-                        cmd: Some(vec!["sh", "-c", &file_cmd]),
+            // Create files
+            for file in files {
+                let file_path = if file.path.starts_with('/') {
+                    file.path.clone()
+                } else {
+                    format!("/sandbox/{}", file.path)
+                };
+
+                // Use proper escaping for file content
+                let write_cmd = format!("cat > {} << 'EOF'\n{}\nEOF", file_path, file.content);
+
+                let exec_options = CreateExecOptions {
+                    cmd: Some(vec!["sh", "-c", &write_cmd]),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    ..Default::default()
+                };
+
+                let exec = self.docker.create_exec(container_id, exec_options).await?;
+                if let Err(e) = self.docker.start_exec(&exec.id, None).await {
+                    tracing::error!("Failed to create file {}: {}", file.path, e);
+                }
+
+                // Make executable if specified
+                if file.is_executable.unwrap_or(false) {
+                    let chmod_cmd = format!("chmod +x {}", file_path);
+
+                    let chmod_exec_options = CreateExecOptions {
+                        cmd: Some(vec!["sh", "-c", &chmod_cmd]),
                         attach_stdout: Some(true),
                         attach_stderr: Some(true),
                         ..Default::default()
                     };
 
-                    let exec = self.docker.create_exec(container_id, exec_options).await?;
-                    if let Err(e) = self.docker.start_exec(&exec.id, None).await {
-                        tracing::error!("Failed to create file {}: {}", file.path, e);
-                    }
-
-                    // Make executable if specified
-                    if file.is_executable.unwrap_or(false) {
-                        let chmod_cmd = if file.path.starts_with('/') {
-                            format!("chmod +x {}", file.path)
-                        } else {
-                            format!("chmod +x /sandbox/{}", file.path)
-                        };
-
-                        let chmod_exec_options = CreateExecOptions {
-                            cmd: Some(vec!["sh", "-c", &chmod_cmd]),
-                            attach_stdout: Some(true),
-                            attach_stderr: Some(true),
-                            ..Default::default()
-                        };
-
-                        let chmod_exec = self.docker.create_exec(container_id, chmod_exec_options).await?;
-                        if let Err(e) = self.docker.start_exec(&chmod_exec.id, None).await {
-                            tracing::error!("Failed to chmod file {}: {}", file.path, e);
-                        }
+                    let chmod_exec = self.docker.create_exec(container_id, chmod_exec_options).await?;
+                    if let Err(e) = self.docker.start_exec(&chmod_exec.id, None).await {
+                        tracing::error!("Failed to chmod file {}: {}", file.path, e);
                     }
                 }
             }
+        }
 
-            // Write main code to file for non-dev server mode
-            let code_file = "/sandbox/main.js";
-            let write_code_cmd = format!("echo '{}' > {}", request.code.replace('\'', "'\"'\"'"), code_file);
+        // Write main code to file if not provided in files
+        if request.files.is_none() || !request.files.as_ref().unwrap().iter().any(|f| f.path.contains("index") || f.path.contains("main")) {
+            let code_file = match request.runtime.as_str() {
+                "bun" => "/sandbox/index.js",
+                "node" | "nodejs" => "/sandbox/index.js", 
+                "typescript" | "ts" => "/sandbox/index.ts",
+                _ => "/sandbox/index.js",
+            };
+            
+            let write_code_cmd = format!("cat > {} << 'EOF'\n{}\nEOF", code_file, request.code);
 
             let exec_options = CreateExecOptions {
                 cmd: Some(vec!["sh", "-c", &write_code_cmd]),
@@ -392,31 +420,13 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             };
 
             let exec = self.docker.create_exec(container_id, exec_options).await?;
-            self.docker.start_exec(&exec.id, None).await?;
+            if let Err(e) = self.docker.start_exec(&exec.id, None).await {
+                tracing::error!("Failed to write main code file: {}", e);
+            }
         }
 
-        // Install dependencies - for dev server mode, use bun install, for others use existing logic
-        if request.dev_server.unwrap_or(false) {
-            // For React dev environment, always install dependencies
-            let install_cmd = match request.runtime.as_str() {
-                "bun" => "cd /sandbox && bun install",
-                "node" | "nodejs" => "cd /sandbox && npm install",
-                _ => "cd /sandbox && bun install", // Default to bun for React
-            };
-
-            let install_exec_options = CreateExecOptions {
-                cmd: Some(vec!["sh", "-c", install_cmd]),
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                ..Default::default()
-            };
-
-            let install_exec = self.docker.create_exec(container_id, install_exec_options).await?;
-            if let Err(e) = self.docker.start_exec(&install_exec.id, None).await {
-                tracing::error!("Failed to install dependencies: {}", e);
-            }
-        } else if request.install_deps.unwrap_or(false) {
-            // Install dependencies if requested for non-dev server mode
+        // Install dependencies if requested
+        if request.install_deps.unwrap_or(false) || request.dev_server.unwrap_or(false) {
             let install_cmd = match request.runtime.as_str() {
                 "bun" => "cd /sandbox && bun install",
                 "node" | "nodejs" => "cd /sandbox && npm install",
@@ -438,10 +448,14 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
         // Start development server if requested
         if request.dev_server.unwrap_or(false) {
-            let dev_cmd = match request.runtime.as_str() {
-                "bun" => "cd /sandbox && bun run dev",
-                "node" | "nodejs" => "cd /sandbox && npm run dev",
-                _ => "cd /sandbox && bun run dev", // Default to bun for React
+            let dev_cmd = if let Some(entry_point) = &request.entry_point {
+                format!("cd /sandbox && {}", entry_point)
+            } else {
+                match request.runtime.as_str() {
+                    "bun" => "cd /sandbox && bun dev".to_string(),
+                    "node" | "nodejs" => "cd /sandbox && npm run dev".to_string(),
+                    _ => "cd /sandbox && bun dev".to_string(),
+                }
             };
 
             // Start dev server in background - use nohup to keep it running
@@ -459,7 +473,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             }
 
             // Wait a moment for the server to start
-            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
         }
 
         // Container is already running with tail -f /dev/null as the main process

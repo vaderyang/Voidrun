@@ -5,10 +5,14 @@ A secure, high-performance sandbox service for running TypeScript, Bun, and Node
 ## Features
 
 - **Multiple Isolation Backends**: Docker containers, nsjail, and extensible architecture for additional backends
-- **Runtime Support**: TypeScript, Bun, and Node.js
-- **RESTful API**: Clean HTTP API for sandbox management
+- **Runtime Support**: TypeScript, Bun, and Node.js with hot reload support
+- **FaaS/Serverless API**: Deploy functions with automatic lifecycle management
+- **Live File Updates**: Update code in running deployments with hot reload
+- **RESTful API**: Clean HTTP API for sandbox and deployment management
+- **Proxy Support**: Direct access to deployed web services
 - **Security**: Network isolation, memory limits, CPU limits, and filesystem restrictions
 - **Performance**: Fast startup times and efficient resource usage
+- **Auto-scaling**: Automatic cleanup of idle deployments
 - **Configurable**: Environment variables and config file support
 
 ## Supported Backends
@@ -114,6 +118,87 @@ curl -X POST http://localhost:8070/sandbox \
   }'
 ```
 
+## FaaS/Serverless API
+
+The FaaS API provides serverless function deployment with automatic lifecycle management, eliminating the need to manually handle sandbox creation and deletion.
+
+### Deploy a Bun Web Service
+```bash
+curl -X POST http://localhost:8070/faas/deploy \
+  -H "Content-Type: application/json" \
+  -d '{
+    "runtime": "bun",
+    "code": "console.log(\"Starting FaaS service...\");",
+    "entry_point": "bun dev",
+    "files": [
+      {
+        "path": "package.json",
+        "content": "{\"name\": \"my-faas\", \"scripts\": {\"dev\": \"bun run --hot index.ts\"}, \"dependencies\": {\"express\": \"^4.18.2\"}}"
+      },
+      {
+        "path": "index.ts",
+        "content": "import express from \"express\"; const app = express(); app.get(\"/\", (req, res) => res.json({message: \"Hello from FaaS!\", timestamp: new Date().toISOString()})); app.listen(3000, () => console.log(\"FaaS service running!\"));"
+      }
+    ],
+    "auto_scale": {
+      "scale_down_after_minutes": 10
+    }
+  }'
+```
+
+**Response:**
+```json
+{
+  "deployment_id": "4a5fded3-e704-40fa-84a5-fda2bc7ea548",
+  "url": "http://127.0.0.1:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548",
+  "sandbox_id": "c9b91260-6a0c-45df-850e-e5ec2ddbfe46",
+  "status": "Running",
+  "runtime": "bun"
+}
+```
+
+### Access Your Deployed Service
+```bash
+# Access the main endpoint
+curl http://127.0.0.1:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548/
+
+# Response: {"message":"Hello from FaaS!","timestamp":"2025-07-10T06:13:13.160Z"}
+```
+
+### Update Files with Hot Reload
+```bash
+curl -X PUT http://127.0.0.1:8070/faas/deployments/4a5fded3-e704-40fa-84a5-fda2bc7ea548/files \
+  -H "Content-Type: application/json" \
+  -d '{
+    "files": [
+      {
+        "path": "index.ts",
+        "content": "import express from \"express\"; const app = express(); app.get(\"/\", (req, res) => res.json({message: \"Updated via API!\", timestamp: new Date().toISOString(), version: \"2.0.0\"})); app.get(\"/new\", (req, res) => res.json({message: \"New endpoint!\"})); app.listen(3000);"
+      }
+    ],
+    "restart_dev_server": true
+  }'
+```
+
+Now access the updated service:
+```bash
+curl http://127.0.0.1:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548/
+# Response: {"message":"Updated via API!","timestamp":"...","version":"2.0.0"}
+
+curl http://127.0.0.1:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548/new
+# Response: {"message":"New endpoint!"}
+```
+
+### List Deployments
+```bash
+curl http://localhost:8070/faas/deployments
+```
+
+### Clean Up
+```bash
+curl -X DELETE http://localhost:8070/faas/deployments/4a5fded3-e704-40fa-84a5-fda2bc7ea548
+```
+
 ## Configuration
 
 ### Environment Variables
@@ -159,11 +244,21 @@ Run with config file:
 | Method | Path | Description |
 |--------|------|-------------|
 | GET | `/health` | Health check |
+| **Sandbox API** | | |
 | POST | `/sandbox` | Create sandbox |
 | GET | `/sandbox/{id}` | Get sandbox info |
 | DELETE | `/sandbox/{id}` | Delete sandbox |
 | POST | `/sandbox/{id}/execute` | Execute code in sandbox |
-| GET | `/sandbox` | List all sandboxes |
+| GET | `/sandboxes` | List all sandboxes |
+| **FaaS API** | | |
+| POST | `/faas/deploy` | Deploy serverless function |
+| GET | `/faas/deployments` | List all deployments |
+| GET | `/faas/deployments/{id}` | Get deployment info |
+| PUT | `/faas/deployments/{id}/files` | Update files in deployment |
+| DELETE | `/faas/deployments/{id}` | Undeploy function |
+| **Proxy API** | | |
+| ALL | `/proxy/{sandbox_id}/*` | Proxy to sandbox web service |
+| ALL | `/faas/{deployment_id}/*` | Proxy to FaaS deployment |
 
 ### Request/Response Examples
 
