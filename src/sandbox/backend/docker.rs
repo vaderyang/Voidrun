@@ -5,7 +5,7 @@ use bollard::{
     container::{Config, CreateContainerOptions, RemoveContainerOptions, StartContainerOptions},
     exec::{CreateExecOptions, StartExecResults},
     image::CreateImageOptions,
-    Docker,
+    ClientVersion, Docker,
 };
 use futures_util::StreamExt;
 use std::collections::HashMap;
@@ -22,8 +22,20 @@ pub struct DockerBackend {
 
 impl DockerBackend {
     pub fn new() -> Result<Self> {
-        let docker = Docker::connect_with_local_defaults()
-            .context("Failed to connect to Docker daemon")?;
+        // Check for DOCKER_HOST environment variable, otherwise use local defaults
+        let docker = if let Ok(docker_host) = std::env::var("DOCKER_HOST") {
+            if docker_host.starts_with("tcp://") {
+                let addr = docker_host.strip_prefix("tcp://").unwrap();
+                Docker::connect_with_http(addr, 120, &ClientVersion { major_version: 1, minor_version: 41 })
+                    .context("Failed to connect to Docker daemon with DOCKER_HOST")?
+            } else {
+                Docker::connect_with_local_defaults()
+                    .context("Failed to connect to Docker daemon")?
+            }
+        } else {
+            Docker::connect_with_local_defaults()
+                .context("Failed to connect to Docker daemon")?
+        };
         Ok(Self { docker })
     }
 
