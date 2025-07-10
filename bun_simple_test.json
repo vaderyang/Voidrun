@@ -1,0 +1,20 @@
+{
+  "runtime": "bun",
+  "code": "console.log('Custom bun project test'); import('./src/server.js').then(server => console.log('Server imported successfully')).catch(console.error);",
+  "timeout_ms": 60000,
+  "memory_limit_mb": 256,
+  "mode": "persistent",
+  "env_vars": {
+    "NODE_ENV": "development"
+  },
+  "files": [
+    {
+      "path": "package.json",
+      "content": "{\n  \"name\": \"bun-simple-test\",\n  \"version\": \"1.0.0\",\n  \"type\": \"module\",\n  \"scripts\": {\n    \"dev\": \"bun run --hot src/server.js\",\n    \"start\": \"bun src/server.js\"\n  }\n}"
+    },
+    {
+      "path": "src/server.js",
+      "content": "import { serve } from 'bun';\n\nconst server = serve({\n  port: 3000,\n  hostname: '0.0.0.0',\n  fetch(req) {\n    const url = new URL(req.url);\n    \n    if (url.pathname === '/') {\n      return new Response(JSON.stringify({\n        message: 'Hello from Bun server!',\n        timestamp: new Date().toISOString(),\n        path: url.pathname\n      }), {\n        headers: { 'Content-Type': 'application/json' }\n      });\n    }\n    \n    if (url.pathname === '/health') {\n      return new Response(JSON.stringify({\n        status: 'ok',\n        server: 'bun',\n        uptime: process.uptime()\n      }), {\n        headers: { 'Content-Type': 'application/json' }\n      });\n    }\n    \n    return new Response('Not Found', { status: 404 });\n  }\n});\n\nconsole.log(`🚀 Bun server running on http://localhost:${server.port}`);\n\nexport default server;"
+    }
+  ]
+}
