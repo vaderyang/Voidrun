@@ -1,0 +1,46 @@
+[package]
+name = "sandbox-service"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1.0", features = ["v4"] }
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors", "trace"] }
+clap = { version = "4.0", features = ["derive"] }
+config = "0.14"
+tempfile = "3.0"
+nix = "0.27"
+libc = "0.2"
+which = "6.0"
+toml = "0.8"
+chrono = { version = "0.4", features = ["serde"] }
+async-trait = "0.1"
+futures-util = "0.3"
+base64 = "0.21"
+reqwest = { version = "0.11", features = ["json"] }
+
+[dependencies.bollard]
+version = "0.15"
+optional = true
+
+[features]
+default = ["docker"]
+docker = ["bollard"]
+
+[[example]]
+name = "basic_usage"
+required-features = []
+
+[dev-dependencies]
+reqwest = { version = "0.11", features = ["json"] }
+tokio-test = "0.4"
+tempfile = "3.0"
+serde_json = "1.0"

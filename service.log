@@ -1,0 +1,6 @@
+[2m2025-07-09T10:24:58.463949Z[0m [32m INFO[0m [2msandbox_service[0m[2m:[0m Starting sandbox service with backend: Docker
+[2m2025-07-09T10:24:58.496210Z[0m [32m INFO[0m [2msandbox_service[0m[2m:[0m Sandbox service listening on 127.0.0.1:8070
+[2m2025-07-09T10:24:58.496227Z[0m [32m INFO[0m [2msandbox_service[0m[2m:[0m Health check: http://127.0.0.1:8070/health
+[2m2025-07-09T11:32:42.105362Z[0m [32m INFO[0m [2msandbox_service[0m[2m:[0m Received shutdown signal, cleaning up...
+[2m2025-07-09T11:32:42.166252Z[0m [33m WARN[0m [2msandbox_service::sandbox::manager[0m[2m:[0m Failed to cleanup sandbox 16ddc032-9ea9-4db4-8fa2-f68b59d80838: Failed to remove container
+[2m2025-07-09T11:32:42.166279Z[0m [32m INFO[0m [2msandbox_service[0m[2m:[0m Shutdown complete

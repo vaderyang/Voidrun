@@ -1,0 +1,31 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cargo init:*)",
+      "Bash(mkdir:*)",
+      "Bash(cargo check:*)",
+      "Bash(cargo build:*)",
+      "Bash(./target/release/sandbox-service --help)",
+      "Bash(cargo test:*)",
+      "Bash(curl:*)",
+      "Bash(pkill:*)",
+      "Bash(chmod:*)",
+      "Bash(./test_sandbox.sh)",
+      "Bash(docker:*)",
+      "Bash(rustc:*)",
+      "Bash(./simple_test)",
+      "Bash(cargo run:*)",
+      "Bash(./manage_typescript_project.sh status:*)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)",
+      "Bash(./manage_typescript_project.sh create:*)",
+      "Bash(sed:*)",
+      "Bash(grep:*)",
+      "Bash(cargo:*)",
+      "Bash(rg:*)",
+      "Bash(ls:*)",
+      "Bash(true)"
+    ],
+    "deny": []
+  }
+}

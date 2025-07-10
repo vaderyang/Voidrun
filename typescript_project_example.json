@@ -1,0 +1,44 @@
+{
+  "runtime": "bun",
+  "code": "console.log('Starting TypeScript project...'); process.exit(0);",
+  "entry_point": "bun dev",
+  "timeout_ms": 300000,
+  "memory_limit_mb": 512,
+  "mode": "persistent",
+  "install_deps": true,
+  "dev_server": true,
+  "env_vars": {
+    "NODE_ENV": "development",
+    "PORT": "3000"
+  },
+  "files": [
+    {
+      "path": "package.json",
+      "content": "{\n  \"name\": \"typescript-sandbox-project\",\n  \"version\": \"1.0.0\",\n  \"scripts\": {\n    \"dev\": \"bun run --hot src/index.tsx\",\n    \"build\": \"bun build src/index.tsx --outdir=dist\",\n    \"start\": \"bun run src/index.tsx\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.2.0\",\n    \"react-dom\": \"^18.2.0\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^18.2.0\",\n    \"@types/react-dom\": \"^18.2.0\",\n    \"typescript\": \"^5.0.0\"\n  }\n}"
+    },
+    {
+      "path": "tsconfig.json",
+      "content": "{\n  \"compilerOptions\": {\n    \"target\": \"ES2020\",\n    \"lib\": [\"DOM\", \"DOM.Iterable\", \"ES6\"],\n    \"allowJs\": true,\n    \"skipLibCheck\": true,\n    \"esModuleInterop\": true,\n    \"allowSyntheticDefaultImports\": true,\n    \"strict\": true,\n    \"forceConsistentCasingInFileNames\": true,\n    \"module\": \"ESNext\",\n    \"moduleResolution\": \"node\",\n    \"resolveJsonModule\": true,\n    \"isolatedModules\": true,\n    \"noEmit\": true,\n    \"jsx\": \"react-jsx\"\n  },\n  \"include\": [\"src\"]\n}"
+    },
+    {
+      "path": "src/index.tsx",
+      "content": "import React from 'react';\nimport { createRoot } from 'react-dom/client';\nimport App from './App';\nimport './styles.css';\n\nconst container = document.getElementById('root');\nif (container) {\n  const root = createRoot(container);\n  root.render(<App />);\n} else {\n  console.error('Root container not found');\n}"
+    },
+    {
+      "path": "src/App.tsx",
+      "content": "import React, { useState } from 'react';\nimport Page from './Page';\n\nconst App: React.FC = () => {\n  const [count, setCount] = useState(0);\n  const [currentPage, setCurrentPage] = useState('home');\n\n  return (\n    <div className=\"app\">\n      <header className=\"app-header\">\n        <h1>TypeScript Sandbox Project</h1>\n        <nav>\n          <button onClick={() => setCurrentPage('home')}>Home</button>\n          <button onClick={() => setCurrentPage('about')}>About</button>\n        </nav>\n      </header>\n      \n      <main className=\"app-main\">\n        <div className=\"counter\">\n          <h2>Counter: {count}</h2>\n          <button onClick={() => setCount(count + 1)}>Increment</button>\n          <button onClick={() => setCount(count - 1)}>Decrement</button>\n        </div>\n        \n        <Page currentPage={currentPage} />\n      </main>\n      \n      <footer className=\"app-footer\">\n        <p>Running in sandbox environment</p>\n      </footer>\n    </div>\n  );\n};\n\nexport default App;"
+    },
+    {
+      "path": "src/Page.tsx",
+      "content": "import React from 'react';\n\ninterface PageProps {\n  currentPage: string;\n}\n\nconst Page: React.FC<PageProps> = ({ currentPage }) => {\n  const renderContent = () => {\n    switch (currentPage) {\n      case 'home':\n        return (\n          <div className=\"page-content\">\n            <h2>Welcome to Home Page</h2>\n            <p>This is a TypeScript React project running in a sandbox!</p>\n            <ul>\n              <li>✅ TypeScript support</li>\n              <li>✅ React components</li>\n              <li>✅ CSS styling</li>\n              <li>✅ Hot reload with Bun</li>\n              <li>✅ Multi-file project structure</li>\n            </ul>\n          </div>\n        );\n      case 'about':\n        return (\n          <div className=\"page-content\">\n            <h2>About This Project</h2>\n            <p>This demonstrates:</p>\n            <ul>\n              <li>Multi-file TypeScript project transfer</li>\n              <li>Persistent sandbox mode</li>\n              <li>Development server running</li>\n              <li>Bun package manager integration</li>\n            </ul>\n          </div>\n        );\n      default:\n        return <div>Page not found</div>;\n    }\n  };\n\n  return (\n    <div className=\"page\">\n      {renderContent()}\n    </div>\n  );\n};\n\nexport default Page;"
+    },
+    {
+      "path": "src/styles.css",
+      "content": "* {\n  margin: 0;\n  padding: 0;\n  box-sizing: border-box;\n}\n\nbody {\n  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;\n  background-color: #f5f5f5;\n  color: #333;\n}\n\n.app {\n  max-width: 1200px;\n  margin: 0 auto;\n  padding: 20px;\n}\n\n.app-header {\n  background: white;\n  padding: 20px;\n  border-radius: 8px;\n  box-shadow: 0 2px 4px rgba(0,0,0,0.1);\n  margin-bottom: 20px;\n}\n\n.app-header h1 {\n  color: #2c3e50;\n  margin-bottom: 15px;\n}\n\n.app-header nav button {\n  background: #3498db;\n  color: white;\n  border: none;\n  padding: 10px 20px;\n  margin-right: 10px;\n  border-radius: 4px;\n  cursor: pointer;\n  transition: background 0.3s;\n}\n\n.app-header nav button:hover {\n  background: #2980b9;\n}\n\n.app-main {\n  display: grid;\n  grid-template-columns: 1fr 2fr;\n  gap: 20px;\n  margin-bottom: 20px;\n}\n\n.counter {\n  background: white;\n  padding: 20px;\n  border-radius: 8px;\n  box-shadow: 0 2px 4px rgba(0,0,0,0.1);\n  text-align: center;\n}\n\n.counter h2 {\n  color: #2c3e50;\n  margin-bottom: 20px;\n  font-size: 1.5em;\n}\n\n.counter button {\n  background: #e74c3c;\n  color: white;\n  border: none;\n  padding: 10px 20px;\n  margin: 0 5px;\n  border-radius: 4px;\n  cursor: pointer;\n  transition: background 0.3s;\n}\n\n.counter button:hover {\n  background: #c0392b;\n}\n\n.page {\n  background: white;\n  padding: 20px;\n  border-radius: 8px;\n  box-shadow: 0 2px 4px rgba(0,0,0,0.1);\n}\n\n.page-content h2 {\n  color: #2c3e50;\n  margin-bottom: 15px;\n}\n\n.page-content ul {\n  list-style: none;\n  padding-left: 0;\n}\n\n.page-content li {\n  padding: 5px 0;\n  border-bottom: 1px solid #ecf0f1;\n}\n\n.page-content li:last-child {\n  border-bottom: none;\n}\n\n.app-footer {\n  background: #34495e;\n  color: white;\n  padding: 15px;\n  text-align: center;\n  border-radius: 8px;\n  margin-top: 20px;\n}\n\n@media (max-width: 768px) {\n  .app-main {\n    grid-template-columns: 1fr;\n  }\n  \n  .app-header nav button {\n    display: block;\n    width: 100%;\n    margin-bottom: 10px;\n  }\n}"
+    },
+    {
+      "path": "public/index.html",
+      "content": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"UTF-8\">\n  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n  <title>TypeScript Sandbox Project</title>\n</head>\n<body>\n  <div id=\"root\"></div>\n  <script type=\"module\" src=\"/src/index.tsx\"></script>\n</body>\n</html>"
+    }
+  ]
+}

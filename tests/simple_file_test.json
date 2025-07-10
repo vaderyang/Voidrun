@@ -1,0 +1,12 @@
+{
+  "runtime": "node",
+  "code": "const fs = require('fs'); console.log('Files:', fs.readdirSync('.')); console.log('Content:', fs.readFileSync('hello.txt', 'utf8'));",
+  "timeout_ms": 5000,
+  "memory_limit_mb": 128,
+  "files": [
+    {
+      "path": "hello.txt",
+      "content": "Hello from transferred file!"
+    }
+  ]
+}

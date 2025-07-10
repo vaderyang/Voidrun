@@ -1,0 +1,25 @@
+{
+  "runtime": "node",
+  "code": "const fs = require('fs'); const utils = require('./utils'); const config = require('./config.json'); console.log('Main execution:', utils.greet(config.name)); console.log('Data file:', fs.readFileSync('data.txt', 'utf8')); console.log('Files in directory:', fs.readdirSync('.'));",
+  "timeout_ms": 10000,
+  "memory_limit_mb": 256,
+  "files": [
+    {
+      "path": "utils.js",
+      "content": "exports.greet = function(name) { return `Hello, ${name}! This is from utils.js`; }; exports.add = function(a, b) { return a + b; };"
+    },
+    {
+      "path": "config.json",
+      "content": "{\"name\": \"Sandbox User\", \"version\": \"1.0.0\", \"features\": [\"file-transfer\", \"multi-file-support\"]}"
+    },
+    {
+      "path": "data.txt",
+      "content": "This is a data file that was transferred to the sandbox!\nIt contains multiple lines of text.\nLine 3: Success!"
+    },
+    {
+      "path": "scripts/helper.js",
+      "content": "console.log('This is a helper script in a subdirectory');",
+      "is_executable": true
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "runtime": "bun",
+  "code": "console.log('🚀 TypeScript project starting...'); console.log('✅ Files transferred successfully');",
+  "mode": "persistent",
+  "timeout_ms": 300000,
+  "memory_limit_mb": 512,
+  "files": [
+    {
+      "path": "package.json",
+      "content": "{\n  \"name\": \"simple-typescript-demo\",\n  \"scripts\": {\n    \"dev\": \"bun run --hot app.tsx\",\n    \"start\": \"bun run app.tsx\"\n  },\n  \"dependencies\": {\n    \"react\": \"^18.2.0\",\n    \"react-dom\": \"^18.2.0\"\n  },\n  \"devDependencies\": {\n    \"@types/react\": \"^18.2.0\",\n    \"typescript\": \"^5.0.0\"\n  }\n}"
+    },
+    {
+      "path": "app.tsx",
+      "content": "import React from 'react';\nimport Page from './page';\n\nconst App: React.FC = () => {\n  return (\n    <div style={{ padding: '20px', fontFamily: 'Arial, sans-serif' }}>\n      <h1>🎯 TypeScript Sandbox Demo</h1>\n      <p>Your multi-file project is running!</p>\n      <Page />\n      <style>{`\n        body { background: #f0f0f0; margin: 0; }\n        h1 { color: #333; }\n        p { color: #666; }\n      `}</style>\n    </div>\n  );\n};\n\nexport default App;\n\nconsole.log('📦 App component loaded');"
+    },
+    {
+      "path": "page.tsx",
+      "content": "import React, { useState } from 'react';\n\nconst Page: React.FC = () => {\n  const [count, setCount] = useState(0);\n  \n  return (\n    <div style={{ \n      background: 'white', \n      padding: '20px', \n      borderRadius: '8px', \n      boxShadow: '0 2px 4px rgba(0,0,0,0.1)' \n    }}>\n      <h2>📄 Page Component</h2>\n      <p>This demonstrates multi-file TypeScript support!</p>\n      <div>\n        <button onClick={() => setCount(count - 1)}>-</button>\n        <span style={{ margin: '0 10px', fontSize: '20px' }}>{count}</span>\n        <button onClick={() => setCount(count + 1)}>+</button>\n      </div>\n      <p>Count: {count}</p>\n    </div>\n  );\n};\n\nexport default Page;\n\nconsole.log('📄 Page component loaded');"
+    },
+    {
+      "path": "styles.css",
+      "content": "/* Global styles for the TypeScript project */\n\nbody {\n  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;\n  margin: 0;\n  padding: 0;\n  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);\n  min-height: 100vh;\n}\n\nbutton {\n  background: #007bff;\n  color: white;\n  border: none;\n  padding: 10px 20px;\n  border-radius: 5px;\n  cursor: pointer;\n  font-size: 16px;\n  transition: background 0.3s;\n}\n\nbutton:hover {\n  background: #0056b3;\n}\n\nh1, h2 {\n  color: #333;\n}\n\np {\n  color: #666;\n  line-height: 1.6;\n}"
+    }
+  ]
+}

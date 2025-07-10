@@ -1,0 +1,6 @@
+{
+  "runtime": "node",
+  "code": "console.log('Hello from Node.js sandbox!'); console.log('Current time:', new Date().toISOString());",
+  "timeout_ms": 5000,
+  "memory_limit_mb": 128
+}
