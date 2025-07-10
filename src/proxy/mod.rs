@@ -381,26 +381,48 @@ pub async fn faas_proxy_handler_root(
     State(state): State<ProxyState>,
     req: Request,
 ) -> Result<Response, StatusCode> {
+    info!("[PROXY] FaaS root request - Deployment: {}", deployment_id);
+    
     // Get sandbox ID from FaaS manager
     let sandbox_id = if let Some(ref faas_manager) = state.faas_manager {
-        faas_manager.get_deployment_for_proxy(&deployment_id).await
-            .ok_or(StatusCode::NOT_FOUND)?
+        match faas_manager.get_deployment_for_proxy(&deployment_id).await {
+            Some(id) => {
+                info!("[PROXY] Found sandbox {} for deployment {}", id, deployment_id);
+                id
+            }
+            None => {
+                error!("[PROXY] Deployment {} not found", deployment_id);
+                return Err(StatusCode::NOT_FOUND);
+            }
+        }
     } else {
+        error!("[PROXY] FaaS manager not available");
         return Err(StatusCode::NOT_FOUND);
     };
 
     // Get port
     let port = if let Some(port) = state.port_allocator.get_port(&sandbox_id).await {
+        info!("[PROXY] Using allocated port {} for sandbox {}", port, sandbox_id);
         port
     } else {
-        get_container_port(&sandbox_id).await
-            .ok_or(StatusCode::NOT_FOUND)?
+        info!("[PROXY] No allocated port for sandbox {}, checking container", sandbox_id);
+        match get_container_port(&sandbox_id).await {
+            Some(port) => {
+                info!("[PROXY] Found container port {} for sandbox {}", port, sandbox_id);
+                port
+            }
+            None => {
+                error!("[PROXY] No port found for sandbox {}", sandbox_id);
+                return Err(StatusCode::NOT_FOUND);
+            }
+        }
     };
 
     // Build target URL
     let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
     let target_url = format!("http://127.0.0.1:{}{}", port, query);
     
+    info!("[PROXY] Forwarding root to: {}", target_url);
     forward_request(state, req, target_url).await
 }
 
@@ -410,20 +432,41 @@ pub async fn faas_proxy_handler(
     State(state): State<ProxyState>,
     req: Request,
 ) -> Result<Response, StatusCode> {
+    info!("[PROXY] FaaS request - Deployment: {}, Path: {}", deployment_id, remainder);
+    
     // Get sandbox ID from FaaS manager
     let sandbox_id = if let Some(ref faas_manager) = state.faas_manager {
-        faas_manager.get_deployment_for_proxy(&deployment_id).await
-            .ok_or(StatusCode::NOT_FOUND)?
+        match faas_manager.get_deployment_for_proxy(&deployment_id).await {
+            Some(id) => {
+                info!("[PROXY] Found sandbox {} for deployment {}", id, deployment_id);
+                id
+            }
+            None => {
+                error!("[PROXY] Deployment {} not found", deployment_id);
+                return Err(StatusCode::NOT_FOUND);
+            }
+        }
     } else {
+        error!("[PROXY] FaaS manager not available");
         return Err(StatusCode::NOT_FOUND);
     };
 
     // Get port
     let port = if let Some(port) = state.port_allocator.get_port(&sandbox_id).await {
+        info!("[PROXY] Using allocated port {} for sandbox {}", port, sandbox_id);
         port
     } else {
-        get_container_port(&sandbox_id).await
-            .ok_or(StatusCode::NOT_FOUND)?
+        info!("[PROXY] No allocated port for sandbox {}, checking container", sandbox_id);
+        match get_container_port(&sandbox_id).await {
+            Some(port) => {
+                info!("[PROXY] Found container port {} for sandbox {}", port, sandbox_id);
+                port
+            }
+            None => {
+                error!("[PROXY] No port found for sandbox {}", sandbox_id);
+                return Err(StatusCode::NOT_FOUND);
+            }
+        }
     };
 
     // Build target URL
@@ -431,6 +474,7 @@ pub async fn faas_proxy_handler(
     let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
     let target_url = format!("http://127.0.0.1:{}{}{}", port, target_path, query);
     
+    info!("[PROXY] Forwarding to: {}", target_url);
     forward_request(state, req, target_url).await
 }
 

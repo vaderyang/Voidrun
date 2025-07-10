@@ -14,13 +14,78 @@ use tokio::time::{timeout, Duration};
 
 use super::{SandboxBackend, SandboxBackendType};
 use crate::sandbox::{SandboxRequest, SandboxResponse, SandboxFile};
-use tracing::{info, warn};
+use tracing::{info, warn, error, debug};
 
 pub struct DockerBackend {
     docker: Docker,
 }
 
 impl DockerBackend {
+    /// Execute a command in the container and capture output with detailed logging
+    async fn execute_with_logging(&self, container_id: &str, command: &str, operation: &str) -> Result<(String, String, bool)> {
+        info!("[DOCKER] Executing {} in container {}: {}", operation, container_id, command);
+        
+        let exec_options = CreateExecOptions {
+            cmd: Some(vec!["sh", "-c", command]),
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
+            ..Default::default()
+        };
+
+        let exec = self.docker.create_exec(container_id, exec_options).await
+            .context(format!("Failed to create exec for {}", operation))?;
+
+        match self.docker.start_exec(&exec.id, None).await {
+            Ok(StartExecResults::Attached { mut output, .. }) => {
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+
+                while let Some(chunk) = output.next().await {
+                    match chunk {
+                        Ok(bollard::container::LogOutput::StdOut { message }) => {
+                            let output_str = String::from_utf8_lossy(&message);
+                            stdout.push_str(&output_str);
+                            debug!("[DOCKER] {} stdout: {}", operation, output_str.trim());
+                        }
+                        Ok(bollard::container::LogOutput::StdErr { message }) => {
+                            let error_str = String::from_utf8_lossy(&message);
+                            stderr.push_str(&error_str);
+                            if !error_str.trim().is_empty() {
+                                warn!("[DOCKER] {} stderr: {}", operation, error_str.trim());
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("[DOCKER] {} stream error: {}", operation, e);
+                            stderr.push_str(&format!("Stream error: {}", e));
+                        }
+                    }
+                }
+
+                let success = stderr.is_empty() || !stderr.contains("error") && !stderr.contains("Error") && !stderr.contains("ERROR");
+                
+                if success {
+                    info!("[DOCKER] {} completed successfully", operation);
+                    if !stdout.trim().is_empty() {
+                        info!("[DOCKER] {} output: {}", operation, stdout.trim());
+                    }
+                } else {
+                    error!("[DOCKER] {} failed with stderr: {}", operation, stderr.trim());
+                }
+                
+                Ok((stdout, stderr, success))
+            }
+            Ok(StartExecResults::Detached) => {
+                warn!("[DOCKER] {} execution detached unexpectedly", operation);
+                Ok((String::new(), "Execution detached".to_string(), false))
+            }
+            Err(e) => {
+                error!("[DOCKER] Failed to execute {}: {}", operation, e);
+                Err(anyhow::anyhow!("Failed to execute {}: {}", operation, e))
+            }
+        }
+    }
+
     pub fn new() -> Result<Self> {
         // Check for DOCKER_HOST environment variable, otherwise use local defaults
         let docker = if let Ok(docker_host) = std::env::var("DOCKER_HOST") {
@@ -344,6 +409,52 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
         Ok(())
     }
 
+    /// Perform internal health check on the dev server
+    async fn perform_health_check(&self, container_id: &str) -> Result<()> {
+        info!("[DOCKER] Starting internal health check");
+        
+        // Check if any process is listening on port 3000
+        let port_check_cmd = "netstat -tlnp 2>/dev/null | grep ':3000' || ss -tlnp 2>/dev/null | grep ':3000' || echo 'No process on port 3000'";
+        let (port_output, _, _) = self.execute_with_logging(container_id, port_check_cmd, "port 3000 check").await?;
+        
+        if port_output.contains("No process on port 3000") {
+            error!("[DOCKER] Health check FAILED: No process listening on port 3000");
+            
+            // Check what processes are running
+            let ps_cmd = "ps aux | grep -E '(node|bun|npm)' | grep -v grep || echo 'No Node/Bun processes running'";
+            let (ps_output, _, _) = self.execute_with_logging(container_id, ps_cmd, "process check").await?;
+            warn!("[DOCKER] Running processes: {}", ps_output);
+            
+            return Err(anyhow::anyhow!("Health check failed: No service listening on port 3000"));
+        } else {
+            info!("[DOCKER] Health check: Process found on port 3000: {}", port_output.trim());
+        }
+        
+        // Try to make an HTTP request to the service
+        let curl_check_cmd = "curl -s -m 5 http://localhost:3000 || echo 'HTTP_CHECK_FAILED'";
+        let (curl_output, _, _) = self.execute_with_logging(container_id, curl_check_cmd, "HTTP health check").await?;
+        
+        if curl_output.contains("HTTP_CHECK_FAILED") {
+            warn!("[DOCKER] Health check WARNING: HTTP request failed, but port is open");
+            
+            // Check if the service is still starting up
+            let retry_cmd = "sleep 2 && curl -s -m 3 http://localhost:3000 || echo 'HTTP_RETRY_FAILED'";
+            let (retry_output, _, _) = self.execute_with_logging(container_id, retry_cmd, "HTTP retry check").await?;
+            
+            if retry_output.contains("HTTP_RETRY_FAILED") {
+                error!("[DOCKER] Health check FAILED: HTTP requests to localhost:3000 failed after retry");
+                return Err(anyhow::anyhow!("Health check failed: Service not responding to HTTP requests"));
+            } else {
+                info!("[DOCKER] Health check PASSED on retry: {}", retry_output.trim());
+            }
+        } else {
+            info!("[DOCKER] Health check PASSED: HTTP response received: {}", curl_output.trim());
+        }
+        
+        info!("[DOCKER] Internal health check completed successfully");
+        Ok(())
+    }
+
     async fn execute_persistent_container(&self, container_id: &str, request: &SandboxRequest, start_time: Instant) -> Result<SandboxResponse> {
         // Create additional files if provided
         if let Some(files) = &request.files {
@@ -440,62 +551,133 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 
         // Install dependencies if requested
         if request.install_deps.unwrap_or(false) || request.dev_server.unwrap_or(false) {
+            info!("[DOCKER] Installing dependencies for {} runtime", request.runtime);
+            
+            // Check if package.json exists first
+            let check_package_cmd = "test -f /sandbox/package.json && echo 'package.json found' || echo 'package.json not found'";
+            let (check_output, _, _) = self.execute_with_logging(container_id, check_package_cmd, "package.json check").await?;
+            info!("[DOCKER] Package check result: {}", check_output.trim());
+            
             let install_cmd = match request.runtime.as_str() {
-                "bun" => "cd /sandbox && bun install",
-                "node" | "nodejs" => "cd /sandbox && npm install",
-                _ => "cd /sandbox && npm install",
+                "bun" => {
+                    info!("[DOCKER] Using Bun package manager for dependency installation");
+                    "cd /sandbox && bun install --verbose"
+                }
+                "node" | "nodejs" => {
+                    info!("[DOCKER] Using npm package manager for dependency installation");
+                    "cd /sandbox && npm install --verbose"
+                }
+                _ => {
+                    warn!("[DOCKER] Unknown runtime {}, defaulting to npm", request.runtime);
+                    "cd /sandbox && npm install --verbose"
+                }
             };
 
-            let install_exec_options = CreateExecOptions {
-                cmd: Some(vec!["sh", "-c", install_cmd]),
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                ..Default::default()
-            };
-
-            let install_exec = self.docker.create_exec(container_id, install_exec_options).await?;
-            if let Err(e) = self.docker.start_exec(&install_exec.id, None).await {
-                tracing::error!("Failed to install dependencies: {}", e);
+            match self.execute_with_logging(container_id, install_cmd, "dependency installation").await {
+                Ok((stdout, stderr, success)) => {
+                    if success {
+                        info!("[DOCKER] Dependencies installed successfully");
+                        
+                        // Log dependency count if available
+                        let count_cmd = "cd /sandbox && find node_modules -maxdepth 1 -type d | wc -l || echo 'node_modules count failed'";
+                        if let Ok((count_output, _, _)) = self.execute_with_logging(container_id, count_cmd, "dependency count").await {
+                            info!("[DOCKER] Installed dependencies count: {}", count_output.trim());
+                        }
+                    } else {
+                        error!("[DOCKER] Dependency installation failed!");
+                        error!("[DOCKER] Install stdout: {}", stdout);
+                        error!("[DOCKER] Install stderr: {}", stderr);
+                        return Err(anyhow::anyhow!("Dependency installation failed: {}", stderr));
+                    }
+                }
+                Err(e) => {
+                    error!("[DOCKER] Failed to execute dependency installation: {}", e);
+                    return Err(e);
+                }
             }
         }
 
         // Start development server if requested
         if request.dev_server.unwrap_or(false) {
+            info!("[DOCKER] Starting development server");
+            
             let dev_cmd = if let Some(entry_point) = &request.entry_point {
+                info!("[DOCKER] Using custom entry point: {}", entry_point);
                 format!("cd /sandbox && {}", entry_point)
             } else {
-                match request.runtime.as_str() {
+                let default_cmd = match request.runtime.as_str() {
                     "bun" => "cd /sandbox && bun dev".to_string(),
                     "node" | "nodejs" => "cd /sandbox && npm run dev".to_string(),
                     _ => "cd /sandbox && bun dev".to_string(),
-                }
+                };
+                info!("[DOCKER] Using default dev command for {}: {}", request.runtime, default_cmd);
+                default_cmd
             };
 
-            // Start dev server in background - use nohup to keep it running
-            let dev_cmd_bg = format!("nohup {} > /sandbox/dev-server.log 2>&1 &", dev_cmd);
-            let dev_exec_options = CreateExecOptions {
-                cmd: Some(vec!["sh", "-c", &dev_cmd_bg]),
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                ..Default::default()
-            };
-
-            let dev_exec = self.docker.create_exec(container_id, dev_exec_options).await?;
-            if let Err(e) = self.docker.start_exec(&dev_exec.id, None).await {
-                tracing::error!("Failed to start dev server: {}", e);
+            // Check if the command exists in package.json (for npm/bun)
+            if !dev_cmd.contains("node ") && !dev_cmd.contains("bun run /") {
+                let check_script_cmd = "cd /sandbox && cat package.json | grep -o '\"dev\"' || echo 'no dev script'";
+                let (script_check, _, _) = self.execute_with_logging(container_id, check_script_cmd, "dev script check").await?;
+                info!("[DOCKER] Dev script availability: {}", script_check.trim());
             }
 
-            // Wait a moment for the server to start
-            tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+            // Start dev server in background and capture initial output
+            info!("[DOCKER] Starting dev server with command: {}", dev_cmd);
+            let dev_cmd_bg = format!("{} > /sandbox/dev-server.log 2>&1 &", dev_cmd);
+            
+            match self.execute_with_logging(container_id, &dev_cmd_bg, "dev server startup").await {
+                Ok((stdout, stderr, success)) => {
+                    if !success {
+                        error!("[DOCKER] Dev server startup command failed!");
+                        error!("[DOCKER] Startup stdout: {}", stdout);
+                        error!("[DOCKER] Startup stderr: {}", stderr);
+                    } else {
+                        info!("[DOCKER] Dev server startup command executed");
+                    }
+                }
+                Err(e) => {
+                    error!("[DOCKER] Failed to start dev server: {}", e);
+                }
+            }
+
+            // Wait for the server to start
+            info!("[DOCKER] Waiting for dev server to initialize...");
+            tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
+            
+            // Check dev server logs
+            let log_cmd = "cd /sandbox && tail -20 dev-server.log 2>/dev/null || echo 'No dev server logs found'";
+            match self.execute_with_logging(container_id, log_cmd, "dev server logs check").await {
+                Ok((log_output, _, _)) => {
+                    if !log_output.trim().is_empty() && log_output != "No dev server logs found" {
+                        info!("[DOCKER] Dev server logs:\n{}", log_output);
+                    } else {
+                        warn!("[DOCKER] No dev server logs found");
+                    }
+                }
+                Err(e) => {
+                    warn!("[DOCKER] Failed to read dev server logs: {}", e);
+                }
+            }
+            
+            // Perform health check
+            self.perform_health_check(container_id).await?;
         }
 
         // Container is already running with tail -f /dev/null as the main process
 
         let execution_time = start_time.elapsed().as_millis() as u64;
 
+        let final_status = if request.dev_server.unwrap_or(false) {
+            "Persistent container with dev server setup completed"
+        } else {
+            "Persistent container setup completed"
+        };
+        
+        info!("[DOCKER] {}", final_status);
+        
         Ok(SandboxResponse {
             success: true,
-            stdout: "Persistent container setup completed".to_string(),
+            stdout: final_status.to_string(),
             stderr: String::new(),
             exit_code: Some(0),
             execution_time_ms: execution_time,

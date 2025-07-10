@@ -7,7 +7,7 @@ use axum::{
 };
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{info, error};
+use tracing::{info, error, warn};
 
 use super::{FaasManager, DeploymentRequest, DeploymentResponse, FileUpdateRequest};
 use crate::sandbox::SandboxManager;
@@ -35,15 +35,28 @@ pub async fn deploy_function(
     State(state): State<FaasState>,
     Json(request): Json<DeploymentRequest>,
 ) -> Result<Json<DeploymentResponse>, StatusCode> {
-    info!("Deploying new function with runtime: {}", request.runtime);
+    info!("[HTTP] Deploy request received - Runtime: {}, Memory: {}MB, Dev server: {}", 
+          request.runtime, 
+          request.memory_limit_mb.unwrap_or(256),
+          request.dev_server.unwrap_or(true));
+    
+    if let Some(ref files) = request.files {
+        info!("[HTTP] Deploy includes {} additional files", files.len());
+    }
+    
+    if let Some(ref env_vars) = request.env_vars {
+        info!("[HTTP] Deploy includes {} environment variables", env_vars.len());
+    }
     
     match state.faas_manager.deploy(request).await {
         Ok(response) => {
-            info!("Function deployed successfully: {}", response.deployment_id);
+            info!("[HTTP] Function deployed successfully - ID: {}, URL: {}, Sandbox: {}", 
+                  response.deployment_id, response.url, response.sandbox_id);
             Ok(Json(response))
         }
         Err(e) => {
-            error!("Failed to deploy function: {}", e);
+            error!("[HTTP] Failed to deploy function: {}", e);
+            error!("[HTTP] Deploy error details: {:?}", e);
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
@@ -82,18 +95,31 @@ pub async fn undeploy_function(
     State(state): State<FaasState>,
     Path(deployment_id): Path<String>,
 ) -> Result<StatusCode, StatusCode> {
-    info!("Undeploying function: {}", deployment_id);
+    info!("[HTTP] Undeploy request received for deployment: {}", deployment_id);
+    
+    // Check if deployment exists first
+    let deployment_info = state.faas_manager.get_deployment(&deployment_id).await;
+    if let Some(info) = deployment_info {
+        info!("[HTTP] Found deployment {} - Sandbox: {}, Status: {:?}", 
+              deployment_id, info.sandbox_id, info.status);
+    } else {
+        warn!("[HTTP] Undeploy requested for non-existent deployment: {}", deployment_id);
+    }
     
     match state.faas_manager.undeploy(&deployment_id).await {
         Ok(()) => {
-            info!("Function undeployed successfully: {}", deployment_id);
+            info!("[HTTP] Function undeployed successfully: {}", deployment_id);
             Ok(StatusCode::NO_CONTENT)
         }
         Err(e) => {
-            error!("Failed to undeploy function {}: {}", deployment_id, e);
+            error!("[HTTP] Failed to undeploy function {}: {}", deployment_id, e);
+            error!("[HTTP] Undeploy error details: {:?}", e);
+            
             if e.to_string().contains("not found") {
+                error!("[HTTP] Deployment {} not found for undeploy", deployment_id);
                 Err(StatusCode::NOT_FOUND)
             } else {
+                error!("[HTTP] Internal error during undeploy");
                 Err(StatusCode::INTERNAL_SERVER_ERROR)
             }
         }
@@ -110,18 +136,29 @@ pub async fn update_files(
     Path(deployment_id): Path<String>,
     Json(request): Json<FileUpdateRequest>,
 ) -> Result<StatusCode, StatusCode> {
-    info!("Updating files for deployment: {}", deployment_id);
+    info!("[HTTP] Update files request for deployment: {}", deployment_id);
+    info!("[HTTP] Update details - Files: {}, Restart dev server: {}", 
+          request.files.len(),
+          request.restart_dev_server.unwrap_or(true));
+    
+    for (idx, file) in request.files.iter().enumerate() {
+        info!("[HTTP] File {} - Path: {}, Size: {} bytes, Executable: {}", 
+              idx + 1, file.path, file.content.len(), file.executable.unwrap_or(false));
+    }
     
     match state.faas_manager.update_files(&deployment_id, request).await {
         Ok(()) => {
-            info!("Files updated successfully for deployment: {}", deployment_id);
+            info!("[HTTP] Files updated successfully for deployment: {}", deployment_id);
             Ok(StatusCode::OK)
         }
         Err(e) => {
-            error!("Failed to update files for deployment {}: {}", deployment_id, e);
+            error!("[HTTP] Failed to update files for deployment {}: {}", deployment_id, e);
+            error!("[HTTP] Update error details: {:?}", e);
             if e.to_string().contains("not found") {
+                error!("[HTTP] Deployment {} not found", deployment_id);
                 Err(StatusCode::NOT_FOUND)
             } else {
+                error!("[HTTP] Internal error during update");
                 Err(StatusCode::INTERNAL_SERVER_ERROR)
             }
         }

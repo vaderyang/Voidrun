@@ -130,21 +130,66 @@ impl FaasManager {
         let sandbox_id = Uuid::new_v4().to_string();
         
         info!("Starting deployment {} with runtime {}", deployment_id, request.runtime);
+        info!("Deploy config - Memory: {}MB, Dev server: {}, Install deps: {}", 
+              request.memory_limit_mb.unwrap_or(256),
+              request.dev_server.unwrap_or(true),
+              true);
+        
+        if let Some(ref files) = request.files {
+            info!("Additional files to deploy: {}", files.len());
+            for file in files {
+                info!("  - {} (executable: {})", file.path, file.executable.unwrap_or(false));
+            }
+        }
+        
+        if let Some(ref env_vars) = request.env_vars {
+            info!("Environment variables: {} configured", env_vars.len());
+        }
 
         // Generate unique URL
         let url = format!("{}/faas/{}", self.base_url, deployment_id);
 
         // Prepare sandbox request
-        let sandbox_request = self.create_sandbox_request(&sandbox_id, &request).await?;
+        info!("Creating sandbox request for deployment {}", deployment_id);
+        let sandbox_request = match self.create_sandbox_request(&sandbox_id, &request).await {
+            Ok(req) => {
+                info!("Sandbox request created - Entry point: {}, Mode: {:?}", 
+                      req.entry_point.as_ref().unwrap_or(&"default".to_string()),
+                      req.mode.as_ref().unwrap_or(&SandboxMode::Persistent));
+                req
+            }
+            Err(e) => {
+                error!("Failed to create sandbox request for deployment {}: {}", deployment_id, e);
+                return Err(anyhow::anyhow!("Failed to create sandbox request: {}", e));
+            }
+        };
 
         // Create sandbox
+        info!("Creating sandbox {} for deployment {}", sandbox_id, deployment_id);
         let mut manager = self.sandbox_manager.write().await;
-        let sandbox = manager.create_sandbox(sandbox_request).await
-            .map_err(|e| anyhow::anyhow!("Failed to create sandbox: {}", e))?;
+        let sandbox = match manager.create_sandbox(sandbox_request).await {
+            Ok(sb) => {
+                info!("Sandbox {} created successfully", sandbox_id);
+                sb
+            }
+            Err(e) => {
+                error!("Failed to create sandbox {} for deployment {}: {}", sandbox_id, deployment_id, e);
+                return Err(anyhow::anyhow!("Failed to create sandbox: {}", e));
+            }
+        };
         drop(manager);
 
         // Execute initial setup
-        self.setup_deployment(&sandbox_id, &request).await?;
+        info!("Setting up deployment {} in sandbox {}", deployment_id, sandbox_id);
+        if let Err(e) = self.setup_deployment(&sandbox_id, &request).await {
+            error!("Failed to setup deployment {} in sandbox {}: {}", deployment_id, sandbox_id, e);
+            // Try to cleanup the sandbox
+            let mut manager = self.sandbox_manager.write().await;
+            if let Err(cleanup_err) = manager.delete_sandbox(&sandbox_id).await {
+                error!("Failed to cleanup sandbox {} after setup failure: {}", sandbox_id, cleanup_err);
+            }
+            return Err(e);
+        }
 
         // Create deployment record
         let auto_scale = request.auto_scale.clone().unwrap_or(AutoScaleConfig {
@@ -169,10 +214,14 @@ impl FaasManager {
         // Store deployment
         {
             let mut deployments = self.deployments.write().await;
-            deployments.insert(deployment_id.clone(), deployment);
+            deployments.insert(deployment_id.clone(), deployment.clone());
+            info!("Deployment {} stored in registry. Total deployments: {}", deployment_id, deployments.len());
         }
 
         info!("Deployment {} created successfully at {}", deployment_id, url);
+        info!("Deployment summary - ID: {}, Sandbox: {}, Runtime: {}, Memory: {}MB, Status: {:?}",
+              deployment_id, sandbox_id, request.runtime, request.memory_limit_mb.unwrap_or(256),
+              DeploymentStatus::Running);
 
         Ok(DeploymentResponse {
             deployment_id: deployment_id.clone(),
@@ -225,24 +274,51 @@ impl FaasManager {
 
     /// Stop and remove a deployment
     pub async fn undeploy(&self, deployment_id: &str) -> Result<()> {
+        info!("Starting undeploy for deployment {}", deployment_id);
+        
         let deployment = {
             let mut deployments = self.deployments.write().await;
-            deployments.remove(deployment_id)
+            let total_before = deployments.len();
+            let deployment = deployments.remove(deployment_id);
+            
+            if deployment.is_some() {
+                info!("Removed deployment {} from registry. Deployments: {} -> {}", 
+                      deployment_id, total_before, deployments.len());
+            } else {
+                error!("Deployment {} not found in registry (total: {})", deployment_id, total_before);
+            }
+            
+            deployment
         };
 
         if let Some(deployment) = deployment {
-            info!("Undeploying {}", deployment_id);
+            info!("Undeploying {} - Sandbox: {}, Runtime: {}, Created: {}", 
+                  deployment_id, deployment.sandbox_id, deployment.runtime, deployment.created_at);
+            
+            // Calculate deployment lifetime
+            let lifetime = Utc::now() - deployment.created_at;
+            info!("Deployment {} was active for {} minutes", deployment_id, lifetime.num_minutes());
             
             // Stop sandbox
+            info!("Deleting sandbox {} for deployment {}", deployment.sandbox_id, deployment_id);
             let mut manager = self.sandbox_manager.write().await;
-            if let Err(e) = manager.delete_sandbox(&deployment.sandbox_id).await {
-                warn!("Failed to delete sandbox {} for deployment {}: {}", 
-                      deployment.sandbox_id, deployment_id, e);
+            match manager.delete_sandbox(&deployment.sandbox_id).await {
+                Ok(()) => {
+                    info!("Sandbox {} deleted successfully", deployment.sandbox_id);
+                }
+                Err(e) => {
+                    error!("Failed to delete sandbox {} for deployment {}: {}", 
+                          deployment.sandbox_id, deployment_id, e);
+                    warn!("Deployment {} removed from registry but sandbox {} cleanup failed", 
+                          deployment_id, deployment.sandbox_id);
+                    // Don't return error here - deployment is already removed from registry
+                }
             }
             
             info!("Deployment {} undeployed successfully", deployment_id);
             Ok(())
         } else {
+            error!("Cannot undeploy - Deployment {} not found", deployment_id);
             Err(anyhow::anyhow!("Deployment {} not found", deployment_id))
         }
     }
@@ -268,33 +344,70 @@ impl FaasManager {
 
     /// Update files in a running deployment
     pub async fn update_files(&self, deployment_id: &str, update_request: FileUpdateRequest) -> Result<()> {
+        info!("Starting file update for deployment {}", deployment_id);
+        info!("Update request - Files: {}, Restart dev server: {}", 
+              update_request.files.len(),
+              update_request.restart_dev_server.unwrap_or(true));
+        
         let deployment = {
             let deployments = self.deployments.read().await;
-            deployments.get(deployment_id).cloned()
+            match deployments.get(deployment_id).cloned() {
+                Some(d) => {
+                    info!("Found deployment {} - Sandbox: {}, Status: {:?}", 
+                          deployment_id, d.sandbox_id, d.status);
+                    Some(d)
+                }
+                None => {
+                    error!("Deployment {} not found in registry", deployment_id);
+                    None
+                }
+            }
         };
 
         if let Some(deployment) = deployment {
-            info!("Updating files for deployment {}", deployment_id);
+            info!("Updating {} files for deployment {} in sandbox {}", 
+                  update_request.files.len(), deployment_id, deployment.sandbox_id);
             
             let mut manager = self.sandbox_manager.write().await;
             
             // Update files in the container
             for file in &update_request.files {
+                info!("Adding file {} to sandbox {} (executable: {})", 
+                      file.path, deployment.sandbox_id, file.executable.unwrap_or(false));
+                
                 if let Err(e) = manager.add_files_to_sandbox(&deployment.sandbox_id, vec![crate::sandbox::SandboxFile {
                     path: file.path.clone(),
                     content: file.content.clone(),
                     is_executable: file.executable,
                 }]).await {
-                    warn!("Failed to add file {} to sandbox: {}", file.path, e);
+                    error!("Failed to add file {} to sandbox {}: {}", file.path, deployment.sandbox_id, e);
+                    warn!("Continuing with remaining files despite error");
                 }
             }
 
             // Update files directly in the running container
-            self.update_container_files(&deployment.sandbox_id, &update_request.files).await?;
+            info!("Updating files directly in running container {}", deployment.sandbox_id);
+            if let Err(e) = self.update_container_files(&deployment.sandbox_id, &update_request.files).await {
+                error!("Failed to update container files for sandbox {}: {}", deployment.sandbox_id, e);
+                return Err(anyhow::anyhow!("Failed to update container files: {}", e));
+            }
+            info!("Container files updated successfully");
 
             // Restart dev server if requested (default: true)
-            if update_request.restart_dev_server.unwrap_or(true) && deployment.request.dev_server.unwrap_or(false) {
-                self.restart_dev_server(&deployment.sandbox_id, &deployment.request).await?;
+            let should_restart = update_request.restart_dev_server.unwrap_or(true);
+            let is_dev_server = deployment.request.dev_server.unwrap_or(false);
+            
+            if should_restart && is_dev_server {
+                info!("Restarting dev server for deployment {} in sandbox {}", 
+                      deployment_id, deployment.sandbox_id);
+                if let Err(e) = self.restart_dev_server(&deployment.sandbox_id, &deployment.request).await {
+                    error!("Failed to restart dev server for sandbox {}: {}", deployment.sandbox_id, e);
+                    return Err(anyhow::anyhow!("Failed to restart dev server: {}", e));
+                }
+                info!("Dev server restarted successfully");
+            } else {
+                info!("Skipping dev server restart - Requested: {}, Is dev server: {}", 
+                      should_restart, is_dev_server);
             }
 
             // Update last accessed time
@@ -303,9 +416,13 @@ impl FaasManager {
                 *last_accessed = Utc::now();
             }
 
-            info!("Files updated successfully for deployment {}", deployment_id);
+            info!("File update completed successfully for deployment {}", deployment_id);
+            info!("Update summary - Deployment: {}, Files updated: {}, Dev server restarted: {}",
+                  deployment_id, update_request.files.len(), 
+                  should_restart && is_dev_server);
             Ok(())
         } else {
+            error!("Cannot update files - Deployment {} not found", deployment_id);
             Err(anyhow::anyhow!("Deployment {} not found", deployment_id))
         }
     }
@@ -338,18 +455,34 @@ impl FaasManager {
                 }
                 
                 // Remove idle deployments
+                if !to_remove.is_empty() {
+                    info!("Auto-cleanup: Found {} idle deployments to remove", to_remove.len());
+                }
+                
                 for (deployment_id, sandbox_id) in to_remove {
-                    info!("Cleaning up idle deployment: {}", deployment_id);
+                    info!("Auto-cleanup: Removing idle deployment {} (sandbox: {})", deployment_id, sandbox_id);
                     
                     {
                         let mut deployments_write = deployments.write().await;
+                        if let Some(deployment) = deployments_write.get(&deployment_id) {
+                            let idle_time = (now - *deployment.last_accessed.read().await).num_minutes();
+                            info!("Auto-cleanup: Deployment {} was idle for {} minutes", deployment_id, idle_time);
+                        }
                         deployments_write.remove(&deployment_id);
                     }
                     
                     // Stop sandbox
+                    info!("Auto-cleanup: Deleting sandbox {} for deployment {}", sandbox_id, deployment_id);
                     let mut manager = sandbox_manager.write().await;
-                    if let Err(e) = manager.delete_sandbox(&sandbox_id).await {
-                        warn!("Failed to delete sandbox {} during cleanup: {}", sandbox_id, e);
+                    match manager.delete_sandbox(&sandbox_id).await {
+                        Ok(()) => {
+                            info!("Auto-cleanup: Successfully deleted sandbox {} for deployment {}", 
+                                  sandbox_id, deployment_id);
+                        }
+                        Err(e) => {
+                            error!("Auto-cleanup: Failed to delete sandbox {} for deployment {}: {}", 
+                                   sandbox_id, deployment_id, e);
+                        }
                     }
                 }
             }
@@ -396,62 +529,117 @@ impl FaasManager {
 
     /// Setup deployment after sandbox creation
     async fn setup_deployment(&self, sandbox_id: &str, request: &DeploymentRequest) -> Result<()> {
+        info!("Starting deployment setup for sandbox {}", sandbox_id);
+        info!("Executing entry point: {}", request.entry_point.as_ref()
+              .unwrap_or(&match request.runtime.as_str() {
+                  "bun" => "bun dev".to_string(),
+                  "node" | "nodejs" => "npm run dev".to_string(),
+                  _ => "npm run dev".to_string(),
+              }));
+        
         // Execute the sandbox to start the web service
         let mut manager = self.sandbox_manager.write().await;
         
         // For FaaS, we execute the sandbox to start the service
-        let exec_result = manager.execute_sandbox(sandbox_id).await
-            .map_err(|e| anyhow::anyhow!("Failed to execute deployment setup: {}", e))?;
+        info!("Executing sandbox {} to start web service", sandbox_id);
+        let exec_result = match manager.execute_sandbox(sandbox_id).await {
+            Ok(result) => {
+                info!("Sandbox execution completed - Success: {}, Exit code: {:?}", 
+                      result.success, result.exit_code);
+                if !result.stdout.is_empty() {
+                    info!("Sandbox stdout: {}", result.stdout);
+                }
+                if !result.stderr.is_empty() {
+                    warn!("Sandbox stderr: {}", result.stderr);
+                }
+                result
+            }
+            Err(e) => {
+                error!("Failed to execute sandbox {}: {}", sandbox_id, e);
+                return Err(anyhow::anyhow!("Failed to execute deployment setup: {}", e));
+            }
+        };
 
         if !exec_result.success {
+            error!("Deployment setup failed for sandbox {} - Exit code: {:?}, Error: {}", 
+                   sandbox_id, exec_result.exit_code, exec_result.stderr);
             return Err(anyhow::anyhow!("Deployment setup failed: {}", exec_result.stderr));
         }
 
-        info!("Deployment setup completed for sandbox {}", sandbox_id);
+        info!("Deployment setup completed successfully for sandbox {}", sandbox_id);
         Ok(())
     }
 
     /// Update files using the sandbox backend abstraction
     async fn update_container_files(&self, sandbox_id: &str, files: &[FileSpec]) -> Result<()> {
+        info!("Converting {} FileSpec to SandboxFile format", files.len());
+        
         // Convert FileSpec to SandboxFile
-        let sandbox_files: Vec<crate::sandbox::SandboxFile> = files.iter().map(|f| crate::sandbox::SandboxFile {
-            path: f.path.clone(),
-            content: f.content.clone(),
-            is_executable: f.executable,
+        let sandbox_files: Vec<crate::sandbox::SandboxFile> = files.iter().map(|f| {
+            info!("  - Converting file: {} (size: {} bytes)", f.path, f.content.len());
+            crate::sandbox::SandboxFile {
+                path: f.path.clone(),
+                content: f.content.clone(),
+                is_executable: f.executable,
+            }
         }).collect();
         
         // Use sandbox manager to get the backend and call update_files
+        info!("Getting sandbox backend for file updates");
         let manager = self.sandbox_manager.read().await;
         if let Some(backend) = manager.get_backend() {
-            backend.update_files(sandbox_id, &sandbox_files).await?;
+            info!("Calling backend.update_files for sandbox {}", sandbox_id);
+            match backend.update_files(sandbox_id, &sandbox_files).await {
+                Ok(()) => {
+                    info!("Backend update_files completed successfully");
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("Backend update_files failed for sandbox {}: {}", sandbox_id, e);
+                    Err(e)
+                }
+            }
         } else {
+            error!("No sandbox backend available for file updates");
             return Err(anyhow::anyhow!("No sandbox backend available"));
         }
-
-        Ok(())
     }
 
     /// Restart the development server using sandbox backend abstraction
     async fn restart_dev_server(&self, sandbox_id: &str, request: &DeploymentRequest) -> Result<()> {
         // Determine the command to run
         let command = if let Some(entry_point) = &request.entry_point {
+            info!("Using custom entry point: {}", entry_point);
             entry_point.clone()
         } else {
-            match request.runtime.as_str() {
+            let default_cmd = match request.runtime.as_str() {
                 "bun" => "bun dev".to_string(),
                 "node" | "nodejs" => "npm run dev".to_string(),
                 _ => "bun dev".to_string(),
-            }
+            };
+            info!("Using default entry point for runtime {}: {}", request.runtime, default_cmd);
+            default_cmd
         };
+        
+        info!("Restarting process in sandbox {} with command: {}", sandbox_id, command);
         
         // Use sandbox manager to get the backend and call restart_process
         let manager = self.sandbox_manager.read().await;
         if let Some(backend) = manager.get_backend() {
-            backend.restart_process(sandbox_id, &command).await?;
+            info!("Calling backend.restart_process for sandbox {}", sandbox_id);
+            match backend.restart_process(sandbox_id, &command).await {
+                Ok(()) => {
+                    info!("Backend restart_process completed successfully for sandbox {}", sandbox_id);
+                    Ok(())
+                }
+                Err(e) => {
+                    error!("Backend restart_process failed for sandbox {}: {}", sandbox_id, e);
+                    Err(e)
+                }
+            }
         } else {
+            error!("No sandbox backend available for process restart");
             return Err(anyhow::anyhow!("No sandbox backend available"));
         }
-
-        Ok(())
     }
 }
