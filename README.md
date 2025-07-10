@@ -17,15 +17,15 @@ A secure, high-performance sandbox service for running TypeScript, Bun, and Node
 
 ## Supported Backends
 
-### nsjail (Recommended for production)
-- **Pros**: Lightweight, fast startup, low resource overhead
-- **Cons**: Linux-only, requires nsjail installation
-- **Use case**: High-frequency code execution, resource-constrained environments
-
-### Docker
+### Docker (Default)
 - **Pros**: Cross-platform, strong isolation, familiar tooling
 - **Cons**: Higher resource usage, slower startup
 - **Use case**: Strong isolation requirements, cross-platform compatibility
+
+### nsjail
+- **Pros**: Lightweight, fast startup, low resource overhead
+- **Cons**: Linux-only, requires nsjail installation
+- **Use case**: High-frequency code execution, resource-constrained environments
 
 ### Future Backends
 - Firecracker (planned)
@@ -37,19 +37,19 @@ A secure, high-performance sandbox service for running TypeScript, Bun, and Node
 
 ### Prerequisites
 
-For nsjail backend (recommended):
+For Docker backend (default):
+```bash
+# Install Docker
+curl -fsSL https://get.docker.com | sh
+```
+
+For nsjail backend:
 ```bash
 # Ubuntu/Debian
 sudo apt-get install nsjail
 
 # macOS (requires compiling from source)
 # See: https://github.com/google/nsjail
-```
-
-For Docker backend:
-```bash
-# Install Docker
-curl -fsSL https://get.docker.com | sh
 ```
 
 ### Installation
@@ -62,11 +62,11 @@ cd sandbox-service
 # Build the service
 cargo build --release
 
-# Run with default settings (nsjail backend)
+# Run with default settings (Docker backend)
 ./target/release/sandbox-service
 
-# Run with Docker backend
-./target/release/sandbox-service --backend docker
+# Run with nsjail backend
+./target/release/sandbox-service --backend nsjail
 ```
 
 ## API Usage
@@ -206,7 +206,7 @@ curl -X DELETE http://localhost:8070/faas/deployments/4a5fded3-e704-40fa-84a5-fd
 ```bash
 SANDBOX_HOST=127.0.0.1
 SANDBOX_PORT=8070
-SANDBOX_BACKEND=nsjail  # or docker
+SANDBOX_BACKEND=docker  # or nsjail
 SANDBOX_TIMEOUT_MS=30000
 SANDBOX_MEMORY_LIMIT_MB=512
 LOG_LEVEL=info
@@ -221,7 +221,7 @@ host = "0.0.0.0"
 port = 8070
 
 [sandbox]
-backend = "nsjail"  # or "docker"
+backend = "docker"  # or "nsjail"
 default_timeout_ms = 30000
 default_memory_limit_mb = 512
 max_concurrent_sandboxes = 10
@@ -368,9 +368,9 @@ WantedBy=multi-user.target
 
 ### Common Issues
 
-1. **nsjail not found**: Install nsjail or use Docker backend
-2. **Permission denied**: Ensure proper user permissions for nsjail
-3. **Docker daemon not running**: Start Docker service
+1. **Docker daemon not running**: Start Docker service
+2. **Permission denied**: Ensure proper user permissions for Docker
+3. **nsjail not found**: Install nsjail or use Docker backend
 4. **Port already in use**: Change port in configuration
 
 ### Logs

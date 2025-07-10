@@ -24,7 +24,26 @@
       "Bash(cargo:*)",
       "Bash(rg:*)",
       "Bash(ls:*)",
-      "Bash(true)"
+      "Bash(true)",
+      "Bash(cat:*)",
+      "Bash(sudo apt:*)",
+      "Bash(sudo apt install:*)",
+      "Bash(git clone:*)",
+      "Bash(make:*)",
+      "Bash(sudo cp:*)",
+      "Bash(find:*)",
+      "Bash(nsjail:*)",
+      "Bash(./target/debug/sandbox-service:*)",
+      "Bash(timeout:*)",
+      "Bash(sudo mkdir:*)",
+      "Bash(sudo usermod:*)",
+      "Bash(sudo docker:*)",
+      "Bash(export DOCKER_HOST=tcp://198.19.249.3:2375)",
+      "Bash(ss:*)",
+      "Bash(./target/release/sandbox-service)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)"
     ],
     "deny": []
   }

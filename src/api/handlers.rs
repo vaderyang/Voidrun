@@ -18,6 +18,57 @@ pub async fn health_check() -> Json<Value> {
     }))
 }
 
+pub async fn execute_one_shot(
+    State(state): State<AppState>,
+    Json(req): Json<CreateSandboxRequest>,
+) -> Result<Json<Value>, StatusCode> {
+    let sandbox_id = Uuid::new_v4().to_string();
+    
+    let sandbox_req = SandboxRequest {
+        id: sandbox_id.clone(),
+        runtime: req.runtime.clone(),
+        code: req.code,
+        entry_point: req.entry_point,
+        timeout_ms: req.timeout_ms.unwrap_or(30000),
+        memory_limit_mb: req.memory_limit_mb.unwrap_or(512),
+        env_vars: req.env_vars.unwrap_or_default(),
+        files: req.files.map(|files| files.into_iter().map(|f| crate::sandbox::SandboxFile {
+            path: f.path,
+            content: f.content,
+            is_executable: f.is_executable,
+        }).collect()),
+        mode: Some(crate::sandbox::SandboxMode::OneShot),
+        install_deps: req.install_deps,
+        dev_server: req.dev_server,
+    };
+
+    let mut manager = state.write().await;
+    match manager.execute_sandbox_direct(sandbox_req).await {
+        Ok(result) => {
+            Ok(Json(json!({
+                "success": result.success,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "exit_code": result.exit_code,
+                "execution_time_ms": result.execution_time_ms,
+                "is_running": result.is_running,
+                "dev_server_url": result.dev_server_url
+            })))
+        }
+        Err(e) => {
+            Ok(Json(json!({
+                "success": false,
+                "stdout": "",
+                "stderr": format!("Execution failed: {}", e),
+                "exit_code": Some(1),
+                "execution_time_ms": 0,
+                "is_running": Some(false),
+                "dev_server_url": None::<String>
+            })))
+        }
+    }
+}
+
 pub async fn create_sandbox(
     State(state): State<AppState>,
     Json(req): Json<CreateSandboxRequest>,

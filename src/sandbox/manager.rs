@@ -52,6 +52,11 @@ impl SandboxManager {
         Ok(response)
     }
 
+    pub async fn execute_sandbox_direct(&mut self, request: SandboxRequest) -> Result<SandboxResponse> {
+        // For one-shot execution, just execute directly without storing the sandbox
+        self.backend.execute_sandbox(&request).await
+    }
+
     pub async fn delete_sandbox(&mut self, sandbox_id: &str) -> Result<()> {
         let _sandbox = self.sandboxes.remove(sandbox_id)
             .ok_or_else(|| anyhow::anyhow!("Sandbox {} not found", sandbox_id))?;

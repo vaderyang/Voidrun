@@ -61,6 +61,7 @@ pub type AppState = Arc<RwLock<SandboxManager>>;
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(handlers::health_check))
+        .route("/execute", post(handlers::execute_one_shot))
         .route("/sandbox", post(handlers::create_sandbox))
         .route("/sandbox/:id", get(handlers::get_sandbox))
         .route("/sandbox/:id", axum::routing::delete(handlers::delete_sandbox))

@@ -41,7 +41,7 @@ impl Default for Config {
                 cors_origin: None,
             },
             sandbox: SandboxConfig {
-                backend: SandboxBackendType::Nsjail,
+                backend: SandboxBackendType::Docker,
                 default_timeout_ms: 30000,
                 default_memory_limit_mb: 256,
                 max_concurrent_sandboxes: 10,
@@ -79,7 +79,7 @@ impl Config {
             config.sandbox.backend = match backend.to_lowercase().as_str() {
                 "docker" => SandboxBackendType::Docker,
                 "nsjail" => SandboxBackendType::Nsjail,
-                _ => SandboxBackendType::Nsjail,
+                _ => SandboxBackendType::Docker,
             };
         }
 

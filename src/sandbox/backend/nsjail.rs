@@ -97,20 +97,15 @@ impl NsjailBackend {
         let mut cmd = Command::new(&self.nsjail_path);
         cmd.args([
             "--mode", "o",  // Once mode - run once and exit
-            "--chroot", sandbox_dir,
             "--user", "nobody",
             "--group", "nogroup",
             "--hostname", "sandbox",
-            "--cwd", "/",
-            "--mount", "none,/,tmpfs,rw,size=50m",
-            "--mount", format!("{},/sandbox,bind,rw", sandbox_dir).as_str(),
+            "--cwd", sandbox_dir,
             "--rlimit_as", &format!("{}", request.memory_limit_mb * 1024 * 1024),
             "--rlimit_cpu", "30", // 30 seconds CPU time
             "--rlimit_fsize", "10485760", // 10MB file size limit
             "--rlimit_nofile", "64", // 64 open files
             "--disable_no_new_privs",
-            "--cap", "-all",
-            "--seccomp_policy", "/dev/null", // Allow all syscalls for now
             "--time_limit", &format!("{}", request.timeout_ms / 1000), // Convert to seconds
             "--really_quiet",
             "--",
