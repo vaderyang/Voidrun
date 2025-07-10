@@ -411,117 +411,45 @@ impl FaasManager {
         Ok(())
     }
 
-    /// Update files directly in the running container
+    /// Update files using the sandbox backend abstraction
     async fn update_container_files(&self, sandbox_id: &str, files: &[FileSpec]) -> Result<()> {
-        #[cfg(feature = "docker")]
-        {
-            use bollard::{Docker, exec::{CreateExecOptions}};
-            
-            let docker = Docker::connect_with_local_defaults()
-                .map_err(|e| anyhow::anyhow!("Failed to connect to Docker: {}", e))?;
-
-            for file in files {
-                // Create directories if needed
-                if let Some(parent) = std::path::Path::new(&file.path).parent() {
-                    if !parent.as_os_str().is_empty() && parent != std::path::Path::new(".") {
-                        let mkdir_cmd = format!("mkdir -p /sandbox/{}", parent.display());
-                        let mkdir_exec_options = CreateExecOptions {
-                            cmd: Some(vec!["sh", "-c", &mkdir_cmd]),
-                            attach_stdout: Some(true),
-                            attach_stderr: Some(true),
-                            ..Default::default()
-                        };
-                        let mkdir_exec = docker.create_exec(sandbox_id, mkdir_exec_options).await?;
-                        if let Err(e) = docker.start_exec(&mkdir_exec.id, None).await {
-                            warn!("Failed to create directory for {}: {}", file.path, e);
-                        }
-                    }
-                }
-
-                // Write file content
-                let file_path = format!("/sandbox/{}", file.path);
-                let write_cmd = format!("cat > {} << 'EOF'\n{}\nEOF", file_path, file.content);
-
-                let exec_options = CreateExecOptions {
-                    cmd: Some(vec!["sh", "-c", &write_cmd]),
-                    attach_stdout: Some(true),
-                    attach_stderr: Some(true),
-                    ..Default::default()
-                };
-
-                let exec = docker.create_exec(sandbox_id, exec_options).await?;
-                docker.start_exec(&exec.id, None).await
-                    .map_err(|e| anyhow::anyhow!("Failed to update file {}: {}", file.path, e))?;
-
-                // Make executable if specified
-                if file.executable.unwrap_or(false) {
-                    let chmod_cmd = format!("chmod +x {}", file_path);
-                    let chmod_exec_options = CreateExecOptions {
-                        cmd: Some(vec!["sh", "-c", &chmod_cmd]),
-                        attach_stdout: Some(true),
-                        attach_stderr: Some(true),
-                        ..Default::default()
-                    };
-                    let chmod_exec = docker.create_exec(sandbox_id, chmod_exec_options).await?;
-                    if let Err(e) = docker.start_exec(&chmod_exec.id, None).await {
-                        warn!("Failed to chmod file {}: {}", file.path, e);
-                    }
-                }
-
-                info!("Updated file: /sandbox/{}", file.path);
-            }
+        // Convert FileSpec to SandboxFile
+        let sandbox_files: Vec<crate::sandbox::SandboxFile> = files.iter().map(|f| crate::sandbox::SandboxFile {
+            path: f.path.clone(),
+            content: f.content.clone(),
+            is_executable: f.executable,
+        }).collect();
+        
+        // Use sandbox manager to get the backend and call update_files
+        let manager = self.sandbox_manager.read().await;
+        if let Some(backend) = manager.get_backend() {
+            backend.update_files(sandbox_id, &sandbox_files).await?;
+        } else {
+            return Err(anyhow::anyhow!("No sandbox backend available"));
         }
 
         Ok(())
     }
 
-    /// Restart the development server
+    /// Restart the development server using sandbox backend abstraction
     async fn restart_dev_server(&self, sandbox_id: &str, request: &DeploymentRequest) -> Result<()> {
-        #[cfg(feature = "docker")]
-        {
-            use bollard::{Docker, exec::{CreateExecOptions}};
-            
-            let docker = Docker::connect_with_local_defaults()
-                .map_err(|e| anyhow::anyhow!("Failed to connect to Docker: {}", e))?;
-
-            // Kill existing dev server processes
-            let kill_cmd = "pkill -f 'bun.*dev' || true";
-            let kill_exec_options = CreateExecOptions {
-                cmd: Some(vec!["sh", "-c", kill_cmd]),
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                ..Default::default()
-            };
-            let kill_exec = docker.create_exec(sandbox_id, kill_exec_options).await?;
-            docker.start_exec(&kill_exec.id, None).await?;
-
-            // Wait a moment for processes to stop
-            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
-
-            // Start new dev server
-            let dev_cmd = if let Some(entry_point) = &request.entry_point {
-                format!("cd /sandbox && {}", entry_point)
-            } else {
-                match request.runtime.as_str() {
-                    "bun" => "cd /sandbox && bun dev".to_string(),
-                    "node" | "nodejs" => "cd /sandbox && npm run dev".to_string(),
-                    _ => "cd /sandbox && bun dev".to_string(),
-                }
-            };
-
-            let dev_cmd_bg = format!("nohup {} > /sandbox/dev-server.log 2>&1 &", dev_cmd);
-            let dev_exec_options = CreateExecOptions {
-                cmd: Some(vec!["sh", "-c", &dev_cmd_bg]),
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                ..Default::default()
-            };
-
-            let dev_exec = docker.create_exec(sandbox_id, dev_exec_options).await?;
-            docker.start_exec(&dev_exec.id, None).await
-                .map_err(|e| anyhow::anyhow!("Failed to restart dev server: {}", e))?;
-
-            info!("Restarted dev server for sandbox {}", sandbox_id);
+        // Determine the command to run
+        let command = if let Some(entry_point) = &request.entry_point {
+            entry_point.clone()
+        } else {
+            match request.runtime.as_str() {
+                "bun" => "bun dev".to_string(),
+                "node" | "nodejs" => "npm run dev".to_string(),
+                _ => "bun dev".to_string(),
+            }
+        };
+        
+        // Use sandbox manager to get the backend and call restart_process
+        let manager = self.sandbox_manager.read().await;
+        if let Some(backend) = manager.get_backend() {
+            backend.restart_process(sandbox_id, &command).await?;
+        } else {
+            return Err(anyhow::anyhow!("No sandbox backend available"));
         }
 
         Ok(())

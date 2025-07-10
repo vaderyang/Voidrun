@@ -233,4 +233,49 @@ impl SandboxBackend for NsjailBackend {
     fn backend_type(&self) -> SandboxBackendType {
         SandboxBackendType::Nsjail
     }
+    
+    async fn update_files(&self, sandbox_id: &str, files: &[crate::sandbox::SandboxFile]) -> Result<()> {
+        let sandbox_dir = self.temp_dir.path().join(sandbox_id);
+        
+        for file in files {
+            let file_path = if file.path.starts_with('/') {
+                sandbox_dir.join(file.path.trim_start_matches('/'))
+            } else {
+                sandbox_dir.join(&file.path)
+            };
+
+            // Create parent directories if they don't exist
+            if let Some(parent) = file_path.parent() {
+                fs::create_dir_all(parent).await
+                    .context("Failed to create parent directory")?;
+            }
+
+            fs::write(&file_path, &file.content).await
+                .context("Failed to write file")?;
+
+            // Make executable if specified
+            if file.is_executable.unwrap_or(false) {
+                #[cfg(unix)]
+                {
+                    use std::os::unix::fs::PermissionsExt;
+                    let mut perms = fs::metadata(&file_path).await?.permissions();
+                    perms.set_mode(perms.mode() | 0o755);
+                    fs::set_permissions(&file_path, perms).await
+                        .context("Failed to set file permissions")?;
+                }
+            }
+            
+            tracing::info!("Updated file: {}", file.path);
+        }
+        Ok(())
+    }
+    
+    async fn restart_process(&self, sandbox_id: &str, command: &str) -> Result<()> {
+        // For nsjail, we can't restart processes in running containers
+        // Instead, we prepare for the next execution by ensuring files are updated
+        // The process restart will happen on the next sandbox execution
+        tracing::info!("Process restart prepared for sandbox {} with command: {}", sandbox_id, command);
+        tracing::warn!("nsjail backend doesn't support hot process restart - files updated for next execution");
+        Ok(())
+    }
 }

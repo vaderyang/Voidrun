@@ -13,7 +13,8 @@ use std::time::Instant;
 use tokio::time::{timeout, Duration};
 
 use super::{SandboxBackend, SandboxBackendType};
-use crate::sandbox::{SandboxRequest, SandboxResponse};
+use crate::sandbox::{SandboxRequest, SandboxResponse, SandboxFile};
+use tracing::{info, warn};
 
 pub struct DockerBackend {
     docker: Docker,
@@ -706,5 +707,97 @@ impl SandboxBackend for DockerBackend {
 
     fn backend_type(&self) -> SandboxBackendType {
         SandboxBackendType::Docker
+    }
+    
+    async fn update_files(&self, sandbox_id: &str, files: &[SandboxFile]) -> Result<()> {
+        for file in files {
+            // Create directories if needed
+            if let Some(parent) = std::path::Path::new(&file.path).parent() {
+                if !parent.as_os_str().is_empty() && parent != std::path::Path::new(".") {
+                    let mkdir_cmd = format!("mkdir -p /sandbox/{}", parent.display());
+                    let mkdir_exec_options = CreateExecOptions {
+                        cmd: Some(vec!["sh", "-c", &mkdir_cmd]),
+                        attach_stdout: Some(true),
+                        attach_stderr: Some(true),
+                        ..Default::default()
+                    };
+                    let mkdir_exec = self.docker.create_exec(sandbox_id, mkdir_exec_options).await?;
+                    if let Err(e) = self.docker.start_exec(&mkdir_exec.id, None).await {
+                        warn!("Failed to create directory for {}: {}", file.path, e);
+                    }
+                }
+            }
+
+            // Write file content
+            let file_path = format!("/sandbox/{}", file.path);
+            let write_cmd = format!("cat > {} << 'EOF'\n{}\nEOF", file_path, file.content);
+
+            let exec_options = CreateExecOptions {
+                cmd: Some(vec!["sh", "-c", &write_cmd]),
+                attach_stdout: Some(true),
+                attach_stderr: Some(true),
+                ..Default::default()
+            };
+
+            let exec = self.docker.create_exec(sandbox_id, exec_options).await?;
+            self.docker.start_exec(&exec.id, None).await
+                .map_err(|e| anyhow::anyhow!("Failed to update file {}: {}", file.path, e))?;
+
+            // Make executable if specified
+            if file.is_executable.unwrap_or(false) {
+                let chmod_cmd = format!("chmod +x {}", file_path);
+                let chmod_exec_options = CreateExecOptions {
+                    cmd: Some(vec!["sh", "-c", &chmod_cmd]),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    ..Default::default()
+                };
+                let chmod_exec = self.docker.create_exec(sandbox_id, chmod_exec_options).await?;
+                if let Err(e) = self.docker.start_exec(&chmod_exec.id, None).await {
+                    warn!("Failed to chmod file {}: {}", file.path, e);
+                }
+            }
+
+            info!("Updated file: /sandbox/{}", file.path);
+        }
+        Ok(())
+    }
+    
+    async fn restart_process(&self, sandbox_id: &str, command: &str) -> Result<()> {
+        // Kill existing processes that match the command pattern
+        let kill_cmd = match command {
+            cmd if cmd.contains("bun") => "pkill -f 'bun.*dev' || true",
+            cmd if cmd.contains("npm") => "pkill -f 'npm.*run' || true", 
+            cmd if cmd.contains("node") => "pkill -f 'node.*' || true",
+            _ => "pkill -f 'dev' || true",
+        };
+        
+        let kill_exec_options = CreateExecOptions {
+            cmd: Some(vec!["sh", "-c", kill_cmd]),
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
+            ..Default::default()
+        };
+        let kill_exec = self.docker.create_exec(sandbox_id, kill_exec_options).await?;
+        self.docker.start_exec(&kill_exec.id, None).await?;
+
+        // Wait a moment for processes to stop
+        tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+        // Start new process in background
+        let bg_cmd = format!("cd /sandbox && nohup {} > /sandbox/dev-server.log 2>&1 &", command);
+        let dev_exec_options = CreateExecOptions {
+            cmd: Some(vec!["sh", "-c", &bg_cmd]),
+            attach_stdout: Some(true),
+            attach_stderr: Some(true),
+            ..Default::default()
+        };
+
+        let dev_exec = self.docker.create_exec(sandbox_id, dev_exec_options).await?;
+        self.docker.start_exec(&dev_exec.id, None).await
+            .map_err(|e| anyhow::anyhow!("Failed to restart process: {}", e))?;
+
+        info!("Restarted process '{}' for sandbox {}", command, sandbox_id);
+        Ok(())
     }
 }

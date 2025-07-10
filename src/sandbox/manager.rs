@@ -75,6 +75,10 @@ impl SandboxManager {
     pub fn get_backend_type(&self) -> &SandboxBackendType {
         &self.backend_type
     }
+    
+    pub fn get_backend(&self) -> Option<&dyn SandboxBackend> {
+        Some(self.backend.as_ref())
+    }
 
     pub async fn cleanup_all(&mut self) -> Result<()> {
         let sandbox_ids: Vec<String> = self.sandboxes.keys().cloned().collect();

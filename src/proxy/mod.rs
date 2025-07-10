@@ -206,7 +206,7 @@ pub async fn proxy_handler_root(
 
     // Build the target URL - default to root path
     let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
-    let target_url = format!("http://127.0.0.1:{}/{}", port, query);
+    let target_url = format!("http://127.0.0.1:{}{}", port, query);
     
     // Forward the request using reqwest
     let method = req.method().clone();
@@ -399,7 +399,7 @@ pub async fn faas_proxy_handler_root(
 
     // Build target URL
     let query = req.uri().query().map(|q| format!("?{}", q)).unwrap_or_default();
-    let target_url = format!("http://127.0.0.1:{}/{}", port, query);
+    let target_url = format!("http://127.0.0.1:{}{}", port, query);
     
     forward_request(state, req, target_url).await
 }
