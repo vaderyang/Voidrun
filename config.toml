@@ -4,12 +4,12 @@ port = 8070
 cors_origin = "*"
 
 [sandbox]
-backend = "nsjail"  # Options: "docker", "nsjail"
+backend = "docker"  # Options: "docker", "nsjail"
 default_timeout_ms = 30000
-default_memory_limit_mb = 512
+default_memory_limit_mb = 128
 max_concurrent_sandboxes = 10
 cleanup_interval_seconds = 300
 
 [logging]
-level = "info"  # Options: "trace", "debug", "info", "warn", "error"
-format = "json"  # Options: "json", "pretty"
+level = "trace"  # Options: "trace", "debug", "info", "warn", "error"
+format = "pretty"  # Options: "json", "pretty"

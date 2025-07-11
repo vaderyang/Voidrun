@@ -158,13 +158,14 @@ impl FaasManager {
 
         // Create sandbox
         info!("Creating sandbox {} for deployment {}", sandbox_id, deployment_id);
+        let sandbox_create_start = std::time::Instant::now();
         let mut manager = self.sandbox_manager.write().await;
         match manager.create_sandbox(sandbox_request).await {
             Ok(_) => {
-                info!("Sandbox {} created successfully", sandbox_id);
+                info!("Sandbox {} created successfully in {:?}", sandbox_id, sandbox_create_start.elapsed());
             }
             Err(e) => {
-                error!("Failed to create sandbox {} for deployment {}: {}", sandbox_id, deployment_id, e);
+                error!("Failed to create sandbox {} for deployment {} after {:?}: {}", sandbox_id, deployment_id, sandbox_create_start.elapsed(), e);
                 return Err(anyhow::anyhow!("Failed to create sandbox: {}", e));
             }
         };
@@ -172,8 +173,21 @@ impl FaasManager {
 
         // Execute initial setup
         info!("Setting up deployment {} in sandbox {}", deployment_id, sandbox_id);
+        info!("Deployment code preview: {}", &request.code[..std::cmp::min(100, request.code.len())]);
         if let Err(e) = self.setup_deployment(&sandbox_id, &request).await {
             error!("Failed to setup deployment {} in sandbox {}: {}", deployment_id, sandbox_id, e);
+            error!("Setup failure details: {:#}", e);
+            
+            // Provide more context about the failure
+            if e.to_string().contains("Health check failed") {
+                error!("DEPLOYMENT ANALYSIS:");
+                error!("- Code: {}", request.code);
+                error!("- Entry point: {}", request.entry_point.as_ref().unwrap_or(&"default".to_string()));
+                error!("- Runtime: {}", request.runtime);
+                error!("- The code executed but didn't start a web server on port 3000");
+                error!("- For web deployments, make sure your code starts a server (Express, Fastify, etc.)");
+            }
+            
             // Try to cleanup the sandbox
             let mut manager = self.sandbox_manager.write().await;
             if let Err(cleanup_err) = manager.delete_sandbox(&sandbox_id).await {
@@ -518,6 +532,7 @@ impl FaasManager {
 
     /// Setup deployment after sandbox creation
     async fn setup_deployment(&self, sandbox_id: &str, request: &DeploymentRequest) -> Result<()> {
+        let start_time = std::time::Instant::now();
         info!("Starting deployment setup for sandbox {}", sandbox_id);
         info!("Executing entry point: {}", request.entry_point.as_ref()
               .unwrap_or(&match request.runtime.as_str() {
@@ -527,14 +542,17 @@ impl FaasManager {
               }));
         
         // Execute the sandbox to start the web service
+        info!("Acquiring sandbox manager lock...");
         let mut manager = self.sandbox_manager.write().await;
+        info!("Sandbox manager lock acquired after {:?}", start_time.elapsed());
         
         // For FaaS, we execute the sandbox to start the service
         info!("Executing sandbox {} to start web service", sandbox_id);
+        let exec_start = std::time::Instant::now();
         let exec_result = match manager.execute_sandbox(sandbox_id).await {
             Ok(result) => {
-                info!("Sandbox execution completed - Success: {}, Exit code: {:?}", 
-                      result.success, result.exit_code);
+                info!("Sandbox execution completed in {:?} - Success: {}, Exit code: {:?}", 
+                      exec_start.elapsed(), result.success, result.exit_code);
                 if !result.stdout.is_empty() {
                     info!("Sandbox stdout: {}", result.stdout);
                 }
@@ -544,18 +562,18 @@ impl FaasManager {
                 result
             }
             Err(e) => {
-                error!("Failed to execute sandbox {}: {}", sandbox_id, e);
+                error!("Failed to execute sandbox {} after {:?}: {}", sandbox_id, exec_start.elapsed(), e);
                 return Err(anyhow::anyhow!("Failed to execute deployment setup: {}", e));
             }
         };
 
         if !exec_result.success {
-            error!("Deployment setup failed for sandbox {} - Exit code: {:?}, Error: {}", 
-                   sandbox_id, exec_result.exit_code, exec_result.stderr);
+            error!("Deployment setup failed for sandbox {} after {:?} - Exit code: {:?}, Error: {}", 
+                   sandbox_id, start_time.elapsed(), exec_result.exit_code, exec_result.stderr);
             return Err(anyhow::anyhow!("Deployment setup failed: {}", exec_result.stderr));
         }
 
-        info!("Deployment setup completed successfully for sandbox {}", sandbox_id);
+        info!("Deployment setup completed successfully for sandbox {} in {:?}", sandbox_id, start_time.elapsed());
         Ok(())
     }
 

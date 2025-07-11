@@ -1,0 +1,7 @@
+{
+  "runtime": "bun",
+  "code": "import { serve } from \"bun\";\n\nconst server = serve({\n  port: 3000,\n  fetch(req) {\n    const secret = process.env.SECRET_KEY || 'not set';\n    return Response.json({ env: secret });\n  }\n});\nconsole.log(\"Bun env var server running on port 3000\");",
+  "entry_point": "bun dev",
+  "dev_server": false,
+  "env_vars": { "SECRET_KEY": "supersecret123" }
+} 

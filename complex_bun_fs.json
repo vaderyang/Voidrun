@@ -1,0 +1,6 @@
+{
+  "runtime": "bun",
+  "code": "import { serve } from \"bun\";\nimport { writeFileSync, readFileSync, existsSync } from \"fs\";\n\nconst filePath = \"/tmp/testfile.txt\";\nif (!existsSync(filePath)) {\n  writeFileSync(filePath, \"Hello from Bun FS!\");\n}\n\nconst server = serve({\n  port: 3000,\n  fetch(req) {\n    const content = readFileSync(filePath, \"utf8\");\n    return Response.json({ file: filePath, content });\n  }\n});\nconsole.log(\"Bun file system server running on port 3000\");",
+  "entry_point": "bun dev",
+  "dev_server": false
+} 

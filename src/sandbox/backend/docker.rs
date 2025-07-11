@@ -354,7 +354,14 @@ impl DockerBackend {
         // Write main code to file if not provided in files
         if request.files.is_none() || !request.files.as_ref().unwrap().iter().any(|f| f.path.contains("index") || f.path.contains("main")) {
             let code_file = match request.runtime.as_str() {
-                "bun" => "/sandbox/index.js",
+                "bun" => {
+                    // Bun can run TypeScript directly, use .ts for import syntax
+                    if request.code.contains("import ") || request.code.contains("export ") {
+                        "/sandbox/index.ts"
+                    } else {
+                        "/sandbox/index.js"
+                    }
+                },
                 "node" | "nodejs" => "/sandbox/index.js", 
                 "typescript" | "ts" => "/sandbox/index.ts",
                 _ => "/sandbox/index.js",
@@ -390,17 +397,24 @@ impl DockerBackend {
                 
                 let package_json_content = match request.runtime.as_str() {
                     "bun" => {
-                        r#"{
+                        // Determine if we should use .ts or .js based on code content
+                        let entry_file = if request.code.contains("import ") || request.code.contains("export ") {
+                            "index.ts"
+                        } else {
+                            "index.js"
+                        };
+                        
+                        format!(r#"{{
   "name": "faas-bun-app",
   "version": "1.0.0",
   "type": "module",
-  "scripts": {
-    "dev": "bun run index.js",
-    "start": "bun run index.js"
-  },
-  "dependencies": {},
-  "devDependencies": {}
-}"#
+  "scripts": {{
+    "dev": "bun run {}",
+    "start": "bun run {}"
+  }},
+  "dependencies": {{}},
+  "devDependencies": {{}}
+}}"#, entry_file, entry_file)
                     }
                     "node" | "nodejs" => {
                         r#"{
@@ -413,7 +427,7 @@ impl DockerBackend {
   },
   "dependencies": {},
   "devDependencies": {}
-}"#
+}"#.to_string()
                     }
                     _ => {
                         r#"{
@@ -426,7 +440,7 @@ impl DockerBackend {
   },
   "dependencies": {},
   "devDependencies": {}
-}"#
+}"#.to_string()
                     }
                 };
                 
@@ -632,7 +646,12 @@ impl DockerBackend {
                 format!("echo '{}' > /sandbox/index.js", request.code.replace('\'', "'\"'\"'"))
             }
             "bun" => {
-                format!("echo '{}' > /sandbox/index.js", request.code.replace('\'', "'\"'\"'"))
+                // Bun can run TypeScript directly, use .ts for import syntax
+                if request.code.contains("import ") || request.code.contains("export ") {
+                    format!("echo '{}' > /sandbox/index.ts", request.code.replace('\'', "'\"'\"'"))
+                } else {
+                    format!("echo '{}' > /sandbox/index.js", request.code.replace('\'', "'\"'\"'"))
+                }
             }
             "typescript" | "ts" => {
                 format!("echo '{}' > /sandbox/index.ts", request.code.replace('\'', "'\"'\"'"))
@@ -661,7 +680,14 @@ impl DockerBackend {
         // Execute code
         let run_cmd = match request.runtime.as_str() {
             "node" | "nodejs" => "node /sandbox/index.js",
-            "bun" => "bun run /sandbox/index.js",
+            "bun" => {
+                // Bun can run both .js and .ts files directly
+                if request.code.contains("import ") || request.code.contains("export ") {
+                    "bun run /sandbox/index.ts"
+                } else {
+                    "bun run /sandbox/index.js"
+                }
+            },
             "typescript" | "ts" => "npx ts-node /sandbox/index.ts",
             _ => anyhow::bail!("Unsupported runtime: {}", request.runtime),
         };

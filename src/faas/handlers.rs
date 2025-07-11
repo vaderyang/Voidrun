@@ -57,6 +57,14 @@ pub async fn deploy_function(
         Err(e) => {
             error!("[HTTP] Failed to deploy function: {}", e);
             error!("[HTTP] Deploy error details: {:?}", e);
+            error!("[HTTP] Deploy error chain: {:#}", e);
+            
+            // Check if it's a health check failure
+            if e.to_string().contains("Health check failed") {
+                error!("[HTTP] HEALTH CHECK FAILURE - The deployed code is not starting a web server on port 3000");
+                error!("[HTTP] Make sure your code starts a web server (e.g., Express, Fastify, etc.) listening on port 3000");
+            }
+            
             Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }

@@ -67,6 +67,14 @@ pub async fn get_system_status(
     Ok(Json(status))
 }
 
+// Helper function to extract numbers from lines like "Pages free: 12345."
+fn extract_number_from_line(line: &str) -> u64 {
+    line.split_whitespace()
+        .find(|part| part.chars().all(|c| c.is_ascii_digit() || c == '.'))
+        .and_then(|s| s.trim_end_matches('.').parse::<u64>().ok())
+        .unwrap_or(0)
+}
+
 async fn get_system_memory_usage() -> Result<ResourceUsage, String> {
     #[cfg(target_os = "linux")]
     {

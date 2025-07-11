@@ -1,0 +1,6 @@
+{
+  "runtime": "bun",
+  "code": "import { serve } from \"bun\";\n\nconst server = serve({\n  port: 3000,\n  fetch(req) {\n    const url = new URL(req.url);\n    if (url.pathname === \"/hello\") {\n      return new Response(\"Hello World!\", { status: 200 });\n    }\n    if (url.pathname === \"/json\") {\n      return Response.json({ message: \"JSON OK\", time: new Date().toISOString() });\n    }\n    return new Response(\"Not found\", { status: 404 });\n  }\n});\nconsole.log(\"Bun multi-endpoint server running on port 3000\");",
+  "entry_point": "bun dev",
+  "dev_server": false
+} 
