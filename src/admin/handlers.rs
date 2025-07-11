@@ -171,12 +171,6 @@ async fn get_system_memory_usage() -> Result<ResourceUsage, String> {
     }
 }
 
-fn extract_number_from_line(line: &str) -> u64 {
-    line.split_whitespace()
-        .nth(2) // Usually the third word is the number
-        .and_then(|s| s.replace(".", "").parse().ok())
-        .unwrap_or(0)
-}
 
 async fn get_system_cpu_usage() -> Result<ResourceUsage, String> {
     #[cfg(target_os = "linux")]

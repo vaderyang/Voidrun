@@ -1,8 +1,5 @@
 use axum::{
-    extract::{Path, State, Query},
-    http::StatusCode,
-    response::{Html, Json},
-    routing::{get, post, delete},
+    routing::{get, post},
     Router,
 };
 use serde::{Deserialize, Serialize};
@@ -60,7 +57,6 @@ pub struct LogEntry {
 #[derive(Debug, Deserialize)]
 pub struct LogQuery {
     pub lines: Option<u32>,
-    pub follow: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]

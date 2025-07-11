@@ -23,7 +23,6 @@ pub trait SandboxBackend: Send + Sync {
     async fn execute_sandbox(&self, request: &SandboxRequest) -> Result<SandboxResponse>;
     async fn cleanup_sandbox(&self, sandbox_id: &str) -> Result<()>;
     async fn is_available(&self) -> bool;
-    fn backend_type(&self) -> SandboxBackendType;
     
     // FaaS-specific methods for file updates and dev server management
     async fn update_files(&self, sandbox_id: &str, files: &[super::SandboxFile]) -> Result<()>;

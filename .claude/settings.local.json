@@ -46,7 +46,8 @@
       "Bash(git config:*)",
       "Bash(export:*)",
       "Bash(SANDBOX_BACKEND=nsjail cargo run)",
-      "Bash(SANDBOX_BACKEND=docker cargo run --features docker)"
+      "Bash(SANDBOX_BACKEND=docker cargo run --features docker)",
+      "Bash(SANDBOX_BACKEND=nsjail cargo run --bin sandbox-service)"
     ],
     "deny": []
   }

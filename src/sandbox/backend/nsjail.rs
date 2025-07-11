@@ -1,15 +1,13 @@
 use anyhow::{Context, Result};
 use async_trait::async_trait;
-use std::collections::HashMap;
 use std::process::Stdio;
 use std::time::Instant;
 use tempfile::TempDir;
 use tokio::fs;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::time::{timeout, Duration};
 
-use super::{SandboxBackend, SandboxBackendType};
+use super::SandboxBackend;
 use crate::sandbox::{SandboxRequest, SandboxResponse};
 
 pub struct NsjailBackend {
@@ -122,11 +120,10 @@ impl NsjailBackend {
             cmd.env(key, value);
         }
 
-        let timeout_duration = Duration::from_millis(request.timeout_ms + 1000); // Add 1s buffer
         let child_result = cmd.spawn();
 
         match child_result {
-            Ok(mut child) => {
+            Ok(child) => {
                 let output_result = timeout(
                     Duration::from_millis(request.timeout_ms + 1000),
                     async {
@@ -225,9 +222,6 @@ impl SandboxBackend for NsjailBackend {
             .unwrap_or(false)
     }
 
-    fn backend_type(&self) -> SandboxBackendType {
-        SandboxBackendType::Nsjail
-    }
     
     async fn update_files(&self, sandbox_id: &str, files: &[crate::sandbox::SandboxFile]) -> Result<()> {
         let sandbox_dir = self.temp_dir.path().join(sandbox_id);

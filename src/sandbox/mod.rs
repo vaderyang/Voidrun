@@ -1,15 +1,12 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use uuid::Uuid;
 
 use crate::api::SandboxInfo;
 
 pub mod backend;
 pub mod manager;
 
-pub use backend::{SandboxBackend, SandboxBackendType};
+pub use backend::SandboxBackendType;
 pub use manager::SandboxManager;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -55,7 +52,6 @@ pub struct SandboxResponse {
 pub struct Sandbox {
     pub id: String,
     pub request: SandboxRequest,
-    pub backend_type: SandboxBackendType,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub status: SandboxStatus,
     pub container_id: Option<String>,
@@ -74,11 +70,10 @@ pub enum SandboxStatus {
 }
 
 impl Sandbox {
-    pub fn new(request: SandboxRequest, backend_type: SandboxBackendType) -> Self {
+    pub fn new(request: SandboxRequest, _backend_type: SandboxBackendType) -> Self {
         Self {
             id: request.id.clone(),
             request,
-            backend_type,
             created_at: chrono::Utc::now(),
             status: SandboxStatus::Created,
             container_id: None,

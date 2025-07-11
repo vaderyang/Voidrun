@@ -47,10 +47,6 @@ pub struct FileSpec {
 /// Auto-scaling configuration
 #[derive(Debug, Clone, Deserialize)]
 pub struct AutoScaleConfig {
-    /// Minimum number of instances (default: 0)
-    pub min_instances: Option<u32>,
-    /// Maximum number of instances (default: 5)
-    pub max_instances: Option<u32>,
     /// Scale down after inactivity (minutes, default: 10)
     pub scale_down_after_minutes: Option<u32>,
 }
@@ -86,11 +82,7 @@ pub struct DeploymentResponse {
 /// Deployment status
 #[derive(Debug, Clone, Serialize, PartialEq)]
 pub enum DeploymentStatus {
-    Deploying,
     Running,
-    Scaling,
-    Stopped,
-    Failed,
 }
 
 /// Deployment information for management
@@ -167,10 +159,9 @@ impl FaasManager {
         // Create sandbox
         info!("Creating sandbox {} for deployment {}", sandbox_id, deployment_id);
         let mut manager = self.sandbox_manager.write().await;
-        let sandbox = match manager.create_sandbox(sandbox_request).await {
-            Ok(sb) => {
+        match manager.create_sandbox(sandbox_request).await {
+            Ok(_) => {
                 info!("Sandbox {} created successfully", sandbox_id);
-                sb
             }
             Err(e) => {
                 error!("Failed to create sandbox {} for deployment {}: {}", sandbox_id, deployment_id, e);
@@ -193,8 +184,6 @@ impl FaasManager {
 
         // Create deployment record
         let auto_scale = request.auto_scale.clone().unwrap_or(AutoScaleConfig {
-            min_instances: Some(0),
-            max_instances: Some(5),
             scale_down_after_minutes: Some(10),
         });
 

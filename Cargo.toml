@@ -34,6 +34,8 @@ optional = true
 [features]
 default = ["docker"]
 docker = ["bollard"]
+firecracker = []
+gvisor = []
 
 [[example]]
 name = "basic_usage"

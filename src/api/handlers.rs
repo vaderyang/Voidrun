@@ -4,7 +4,6 @@ use axum::{
     response::Json,
 };
 use serde_json::{json, Value};
-use std::collections::HashMap;
 use uuid::Uuid;
 
 use super::{AppState, CreateSandboxRequest, ExecutionResult, SandboxInfo, SandboxFile};

@@ -12,7 +12,7 @@ use std::collections::HashMap;
 use std::time::Instant;
 use tokio::time::{timeout, Duration};
 
-use super::{SandboxBackend, SandboxBackendType};
+use super::SandboxBackend;
 use crate::sandbox::{SandboxRequest, SandboxResponse, SandboxFile};
 use tracing::{info, warn, error, debug};
 
@@ -144,7 +144,7 @@ impl DockerBackend {
         Ok(image_name.to_string())
     }
 
-    async fn create_container(&self, request: &SandboxRequest, image: &str, host_port: Option<u16>) -> Result<String> {
+    async fn create_container(&self, request: &SandboxRequest, image: &str, host_port: Option<u16>) -> Result<(String, Option<u16>)> {
         // Auto-allocate port for dev servers if not provided
         let actual_host_port = if request.dev_server.unwrap_or(false) && matches!(request.mode, Some(crate::sandbox::SandboxMode::Persistent)) {
             host_port.or_else(|| Some(self.find_available_port()))
@@ -228,186 +228,10 @@ impl DockerBackend {
             .await
             .context("Failed to create container")?;
 
-        Ok(container.id)
+        info!("[DOCKER] Container {} created with host port: {:?}", container.id, actual_host_port);
+        Ok((container.id, actual_host_port))
     }
 
-    async fn setup_react_dev_environment(&self, container_id: &str, request: &SandboxRequest) -> Result<()> {
-        // Create package.json for Vite + React project
-        let package_json = r#"{
-  "name": "sandbox-react-app",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite --host 0.0.0.0 --port 3000",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "react": "^18.2.0",
-    "react-dom": "^18.2.0"
-  },
-  "devDependencies": {
-    "@types/react": "^18.2.15",
-    "@types/react-dom": "^18.2.7",
-    "@vitejs/plugin-react": "^4.0.3",
-    "autoprefixer": "^10.4.14",
-    "postcss": "^8.4.27",
-    "tailwindcss": "^3.3.3",
-    "vite": "^4.4.5"
-  }
-}"#;
-
-        // Create vite.config.js
-        let vite_config = r#"import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-export default defineConfig({
-  plugins: [react()],
-  server: {
-    host: '0.0.0.0',
-    port: 3000
-  }
-})
-"#;
-
-        // Create tailwind.config.js
-        let tailwind_config = r#"/** @type {import('tailwindcss').Config} */
-export default {
-  content: [
-    "./index.html",
-    "./src/**/*.{js,ts,jsx,tsx}",
-  ],
-  theme: {
-    extend: {},
-  },
-  plugins: [],
-}
-"#;
-
-        // Create postcss.config.js
-        let postcss_config = r#"export default {
-  plugins: {
-    tailwindcss: {},
-    autoprefixer: {},
-  },
-}
-"#;
-
-        // Create index.html
-        let index_html = r#"<!doctype html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sandbox React App</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.tsx"></script>
-  </body>
-</html>
-"#;
-
-        // Create src/main.tsx
-        let main_tsx = r#"import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App.tsx'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
-"#;
-
-        // Handle special case where code field contains JSON with reactCode and cssCode
-        let (react_code, css_code) = if request.code.trim().starts_with('{') && request.code.contains("reactCode") {
-            // Parse JSON to extract reactCode and cssCode
-            match serde_json::from_str::<serde_json::Value>(&request.code) {
-                Ok(json) => {
-                    let react_code = json.get("reactCode")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("export default function App() { return <div>Hello World</div>; }")
-                        .to_string();
-                    let css_code = json.get("cssCode")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("@tailwind base;\n@tailwind components;\n@tailwind utilities;")
-                        .to_string();
-                    (react_code, css_code)
-                },
-                Err(_) => {
-                    // Fallback to treating code as React component
-                    (request.code.clone(), "@tailwind base;\n@tailwind components;\n@tailwind utilities;".to_string())
-                }
-            }
-        } else {
-            // Regular React code
-            (request.code.clone(), "@tailwind base;\n@tailwind components;\n@tailwind utilities;".to_string())
-        };
-
-        // Create src/index.css with the provided CSS or default
-        let index_css = if let Some(files) = &request.files {
-            if let Some(css_file) = files.iter().find(|f| f.path.contains("css") || f.path == "cssCode") {
-                &css_file.content
-            } else {
-                &css_code
-            }
-        } else {
-            &css_code
-        };
-
-        // Create src/App.tsx with the provided React code or default
-        let app_tsx = if let Some(files) = &request.files {
-            if let Some(react_file) = files.iter().find(|f| f.path.contains("tsx") || f.path.contains("jsx") || f.path == "reactCode") {
-                &react_file.content
-            } else {
-                &react_code
-            }
-        } else {
-            &react_code
-        };
-
-        // Write all files to the container
-        let files_to_create = vec![
-            ("/sandbox/package.json", package_json),
-            ("/sandbox/vite.config.js", vite_config),
-            ("/sandbox/tailwind.config.js", tailwind_config),
-            ("/sandbox/postcss.config.js", postcss_config),
-            ("/sandbox/index.html", index_html),
-            ("/sandbox/src/main.tsx", main_tsx),
-            ("/sandbox/src/index.css", index_css),
-            ("/sandbox/src/App.tsx", app_tsx),
-        ];
-
-        // Create src directory first
-        let mkdir_cmd = "mkdir -p /sandbox/src";
-        let mkdir_exec_options = CreateExecOptions {
-            cmd: Some(vec!["sh", "-c", mkdir_cmd]),
-            attach_stdout: Some(true),
-            attach_stderr: Some(true),
-            ..Default::default()
-        };
-        let mkdir_exec = self.docker.create_exec(container_id, mkdir_exec_options).await?;
-        self.docker.start_exec(&mkdir_exec.id, None).await?;
-
-        // Write all files
-        for (file_path, content) in files_to_create {
-            let write_cmd = format!("cat > {} << 'EOF'\n{}\nEOF", file_path, content);
-            let exec_options = CreateExecOptions {
-                cmd: Some(vec!["sh", "-c", &write_cmd]),
-                attach_stdout: Some(true),
-                attach_stderr: Some(true),
-                ..Default::default()
-            };
-            let exec = self.docker.create_exec(container_id, exec_options).await?;
-            self.docker.start_exec(&exec.id, None).await?;
-        }
-
-        Ok(())
-    }
 
     /// Perform internal health check on the dev server
     async fn perform_health_check(&self, container_id: &str) -> Result<()> {
@@ -430,25 +254,27 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             info!("[DOCKER] Health check: Process found on port 3000: {}", port_output.trim());
         }
         
-        // Try to make an HTTP request to the service
-        let curl_check_cmd = "curl -s -m 5 http://localhost:3000 || echo 'HTTP_CHECK_FAILED'";
-        let (curl_output, _, _) = self.execute_with_logging(container_id, curl_check_cmd, "HTTP health check").await?;
+        // Try to make an HTTP request to the service using wget (available in Alpine) or nc
+        let http_check_cmd = "wget -q -O- --timeout=5 http://localhost:3000 2>/dev/null || nc -z localhost 3000 && echo 'PORT_ACCESSIBLE' || echo 'HTTP_CHECK_FAILED'";
+        let (http_output, _, _) = self.execute_with_logging(container_id, http_check_cmd, "HTTP health check").await?;
         
-        if curl_output.contains("HTTP_CHECK_FAILED") {
+        if http_output.contains("HTTP_CHECK_FAILED") {
             warn!("[DOCKER] Health check WARNING: HTTP request failed, but port is open");
             
-            // Check if the service is still starting up
-            let retry_cmd = "sleep 2 && curl -s -m 3 http://localhost:3000 || echo 'HTTP_RETRY_FAILED'";
+            // Check if the service is still starting up using nc (netcat)
+            let retry_cmd = "sleep 2 && nc -z localhost 3000 && echo 'PORT_ACCESSIBLE_RETRY' || echo 'HTTP_RETRY_FAILED'";
             let (retry_output, _, _) = self.execute_with_logging(container_id, retry_cmd, "HTTP retry check").await?;
             
             if retry_output.contains("HTTP_RETRY_FAILED") {
-                error!("[DOCKER] Health check FAILED: HTTP requests to localhost:3000 failed after retry");
-                return Err(anyhow::anyhow!("Health check failed: Service not responding to HTTP requests"));
+                error!("[DOCKER] Health check FAILED: Cannot connect to port 3000 after retry");
+                return Err(anyhow::anyhow!("Health check failed: Service not responding on port 3000"));
             } else {
-                info!("[DOCKER] Health check PASSED on retry: {}", retry_output.trim());
+                info!("[DOCKER] Health check PASSED on retry: Port 3000 is accessible");
             }
+        } else if http_output.contains("PORT_ACCESSIBLE") {
+            info!("[DOCKER] Health check PASSED: Port 3000 is accessible");
         } else {
-            info!("[DOCKER] Health check PASSED: HTTP response received: {}", curl_output.trim());
+            info!("[DOCKER] Health check PASSED: HTTP response received: {}", http_output.trim());
         }
         
         info!("[DOCKER] Internal health check completed successfully");
@@ -558,6 +384,70 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
             let (check_output, _, _) = self.execute_with_logging(container_id, check_package_cmd, "package.json check").await?;
             info!("[DOCKER] Package check result: {}", check_output.trim());
             
+            // Auto-create package.json if none exists and we're using Bun or Node
+            if check_output.contains("package.json not found") {
+                info!("[DOCKER] Auto-creating package.json for {} runtime", request.runtime);
+                
+                let package_json_content = match request.runtime.as_str() {
+                    "bun" => {
+                        r#"{
+  "name": "faas-bun-app",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "bun run index.js",
+    "start": "bun run index.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}"#
+                    }
+                    "node" | "nodejs" => {
+                        r#"{
+  "name": "faas-node-app",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}"#
+                    }
+                    _ => {
+                        r#"{
+  "name": "faas-app",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "dev": "node index.js",
+    "start": "node index.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}"#
+                    }
+                };
+                
+                let create_package_cmd = format!("cat > /sandbox/package.json << 'EOF'\n{}\nEOF", package_json_content);
+                match self.execute_with_logging(container_id, &create_package_cmd, "package.json creation").await {
+                    Ok((_, _, success)) => {
+                        if success {
+                            info!("[DOCKER] package.json created successfully");
+                        } else {
+                            error!("[DOCKER] Failed to create package.json");
+                            return Err(anyhow::anyhow!("Failed to create package.json"));
+                        }
+                    }
+                    Err(e) => {
+                        error!("[DOCKER] Error creating package.json: {}", e);
+                        return Err(e);
+                    }
+                }
+            }
+            
+            // Now proceed with dependency installation
             let install_cmd = match request.runtime.as_str() {
                 "bun" => {
                     info!("[DOCKER] Using Bun package manager for dependency installation");
@@ -866,7 +756,12 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
 impl SandboxBackend for DockerBackend {
     async fn create_sandbox(&self, request: &SandboxRequest) -> Result<()> {
         let image = self.ensure_runtime_image(&request.runtime).await?;
-        let container_id = self.create_container(request, &image, None).await?;
+        let (container_id, allocated_port) = self.create_container(request, &image, None).await?;
+        
+        if let Some(port) = allocated_port {
+            info!("[DOCKER] Sandbox {} allocated host port {}", request.id, port);
+            // TODO: Store port mapping for proxy access
+        }
         
         self.docker
             .start_container(&container_id, None::<StartContainerOptions<String>>)
@@ -899,9 +794,6 @@ impl SandboxBackend for DockerBackend {
         self.docker.ping().await.is_ok()
     }
 
-    fn backend_type(&self) -> SandboxBackendType {
-        SandboxBackendType::Docker
-    }
     
     async fn update_files(&self, sandbox_id: &str, files: &[SandboxFile]) -> Result<()> {
         for file in files {

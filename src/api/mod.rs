@@ -1,7 +1,4 @@
 use axum::{
-    extract::{Path, State},
-    http::StatusCode,
-    response::Json,
     routing::{get, post},
     Router,
 };
@@ -9,9 +6,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use uuid::Uuid;
 
-use crate::sandbox::{SandboxManager, SandboxRequest, SandboxResponse};
+use crate::sandbox::SandboxManager;
 
 pub mod handlers;
 
