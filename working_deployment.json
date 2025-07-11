@@ -1,6 +1,0 @@
-{
-  "runtime": "bun",
-  "code": "import { serve } from 'bun'; serve({ port: 3000, fetch(req) { return new Response(JSON.stringify({ message: 'Hello FaaS!', timestamp: new Date().toISOString(), url: req.url })); } }); console.log('Server running on port 3000');",
-  "entry_point": "bun run index.ts",
-  "dev_server": false
-} 

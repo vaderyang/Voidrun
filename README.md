@@ -2,6 +2,14 @@
 
 A secure, high-performance sandbox service for running TypeScript, Bun, and Node.js code in isolated environments. Built with Rust for maximum performance and security.
 
+## Directory Structure
+
+- `src/` — Rust source code
+- `tests/` — All test files and test scripts (including advanced Bun/Node/TypeScript FaaS tests)
+- `docs/` — All documentation and guides (see below)
+- `examples/` — Rust code usage examples
+- `README.md` — This file (quick start, API, and project overview)
+
 ## Features
 
 - **Multiple Isolation Backends**: Docker containers, nsjail, and extensible architecture for additional backends
@@ -15,371 +23,69 @@ A secure, high-performance sandbox service for running TypeScript, Bun, and Node
 - **Auto-scaling**: Automatic cleanup of idle deployments
 - **Configurable**: Environment variables and config file support
 
-## Supported Backends
-
-### Docker (Default)
-- **Pros**: Cross-platform, strong isolation, familiar tooling
-- **Cons**: Higher resource usage, slower startup
-- **Use case**: Strong isolation requirements, cross-platform compatibility
-
-### nsjail
-- **Pros**: Lightweight, fast startup, low resource overhead
-- **Cons**: Linux-only, requires nsjail installation
-- **Use case**: High-frequency code execution, resource-constrained environments
-
-### Future Backends
-- Firecracker (planned)
-- gVisor (planned)
-- BPFBox (planned)
-- Rumpkernel (planned)
-
 ## Quick Start
 
+See `docs/HOW_TO_USE.md` for a full getting started guide.
+
 ### Prerequisites
+- Docker (default backend)
+- Rust toolchain
 
-For Docker backend (default):
+### Build and Run
 ```bash
-# Install Docker
-curl -fsSL https://get.docker.com | sh
-```
-
-For nsjail backend:
-```bash
-# Ubuntu/Debian
-sudo apt-get install nsjail
-
-# macOS (requires compiling from source)
-# See: https://github.com/google/nsjail
-```
-
-### Installation
-
-```bash
-# Clone the repository
-git clone <repository-url>
-cd sandbox-service
-
-# Build the service
 cargo build --release
-
-# Run with default settings (Docker backend)
 ./target/release/sandbox-service
-
-# Run with nsjail backend
-./target/release/sandbox-service --backend nsjail
 ```
 
 ## API Usage
+
+See `docs/API.md` for the full API reference and request/response examples.
 
 ### Health Check
 ```bash
 curl http://localhost:8070/health
 ```
 
-### Create and Execute Sandbox
-```bash
-# Create a Node.js sandbox
-curl -X POST http://localhost:8070/sandbox \
-  -H "Content-Type: application/json" \
-  -d '{
-    "runtime": "node",
-    "code": "console.log(\"Hello from Node.js!\")",
-    "timeout_ms": 5000,
-    "memory_limit_mb": 128
-  }'
-
-# Response: {"id": "123e4567-e89b-12d3-a456-426614174000", ...}
-
-# Execute the sandbox
-curl -X POST http://localhost:8070/sandbox/123e4567-e89b-12d3-a456-426614174000/execute
-```
-
-### TypeScript Example
-```bash
-curl -X POST http://localhost:8070/sandbox \
-  -H "Content-Type: application/json" \
-  -d '{
-    "runtime": "typescript",
-    "code": "const greeting: string = \"Hello TypeScript!\"; console.log(greeting);",
-    "timeout_ms": 10000,
-    "memory_limit_mb": 256
-  }'
-```
-
-### Bun Example
-```bash
-curl -X POST http://localhost:8070/sandbox \
-  -H "Content-Type: application/json" \
-  -d '{
-    "runtime": "bun",
-    "code": "console.log(\"Hello from Bun!\"); console.log(Bun.version);",
-    "timeout_ms": 5000,
-    "memory_limit_mb": 128
-  }'
-```
-
-## FaaS/Serverless API
-
-The FaaS API provides serverless function deployment with automatic lifecycle management, eliminating the need to manually handle sandbox creation and deletion.
-
-### Deploy a Bun Web Service
+### Deploy a Bun FaaS Web Service (TypeScript or JavaScript)
 ```bash
 curl -X POST http://localhost:8070/faas/deploy \
   -H "Content-Type: application/json" \
   -d '{
     "runtime": "bun",
-    "code": "console.log(\"Starting FaaS service...\");",
+    "code": "import { serve } from \"bun\"; const server = serve({ port: 3000, fetch(req) { return new Response(\"Hello from Bun!\"); } });",
     "entry_point": "bun dev",
-    "files": [
-      {
-        "path": "package.json",
-        "content": "{\"name\": \"my-faas\", \"scripts\": {\"dev\": \"bun run --hot index.ts\"}, \"dependencies\": {\"express\": \"^4.18.2\"}}"
-      },
-      {
-        "path": "index.ts",
-        "content": "import express from \"express\"; const app = express(); app.get(\"/\", (req, res) => res.json({message: \"Hello from FaaS!\", timestamp: new Date().toISOString()})); app.listen(3000, () => console.log(\"FaaS service running!\"));"
-      }
-    ],
-    "auto_scale": {
-      "scale_down_after_minutes": 10
-    }
+    "dev_server": false
   }'
 ```
 
-**Response:**
-```json
-{
-  "deployment_id": "4a5fded3-e704-40fa-84a5-fda2bc7ea548",
-  "url": "http://127.0.0.1:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548",
-  "sandbox_id": "c9b91260-6a0c-45df-850e-e5ec2ddbfe46",
-  "status": "Running",
-  "runtime": "bun"
-}
-```
+### Advanced Bun FaaS Examples
 
-### Access Your Deployed Service
-```bash
-# Access the main endpoint
-curl http://127.0.0.1:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548/
+See `tests/complex_bun_routing.json`, `tests/complex_bun_async.json`, `tests/complex_bun_env.json`, and `tests/complex_bun_fs.json` for:
+- Multi-endpoint routing
+- Async/await with external fetch
+- Environment variable usage
+- File system read/write
 
-# Response: {"message":"Hello from FaaS!","timestamp":"2025-07-10T06:13:13.160Z"}
-```
+**All these advanced features are now fully supported!**
 
-### Update Files with Hot Reload
-```bash
-curl -X PUT http://127.0.0.1:8070/faas/deployments/4a5fded3-e704-40fa-84a5-fda2bc7ea548/files \
-  -H "Content-Type: application/json" \
-  -d '{
-    "files": [
-      {
-        "path": "index.ts",
-        "content": "import express from \"express\"; const app = express(); app.get(\"/\", (req, res) => res.json({message: \"Updated via API!\", timestamp: new Date().toISOString(), version: \"2.0.0\"})); app.get(\"/new\", (req, res) => res.json({message: \"New endpoint!\"})); app.listen(3000);"
-      }
-    ],
-    "restart_dev_server": true
-  }'
-```
+## Documentation
 
-Now access the updated service:
-```bash
-curl http://127.0.0.1:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548/
-# Response: {"message":"Updated via API!","timestamp":"...","version":"2.0.0"}
+- All detailed guides, architecture docs, and workflow examples are in the `docs/` directory:
+  - `docs/API.md` — Full API reference
+  - `docs/HOW_TO_USE.md` — Getting started and usage guide
+  - `docs/COMPLETE_TYPESCRIPT_WORKFLOW.md` — End-to-end TypeScript workflow
+  - `docs/CONTAINER_LIFECYCLE_AND_FILE_TRANSFER.md` — Container/file management
+  - `docs/PROXY_SOLUTION.md` — Proxy and networking details
+  - `docs/TYPESCRIPT_PROJECT_GUIDE.md` — TypeScript project integration
+  - `docs/ADMIN_UI_DEMO.md` — Admin UI usage
+  - Example/test configs and scripts for FaaS and sandboxing
 
-curl http://127.0.0.1:8070/faas/4a5fded3-e704-40fa-84a5-fda2bc7ea548/new
-# Response: {"message":"New endpoint!"}
-```
+## Tests
 
-### List Deployments
-```bash
-curl http://localhost:8070/faas/deployments
-```
-
-### Clean Up
-```bash
-curl -X DELETE http://localhost:8070/faas/deployments/4a5fded3-e704-40fa-84a5-fda2bc7ea548
-```
-
-## Configuration
-
-### Environment Variables
-
-```bash
-SANDBOX_HOST=127.0.0.1
-SANDBOX_PORT=8070
-SANDBOX_BACKEND=docker  # or nsjail
-SANDBOX_TIMEOUT_MS=30000
-SANDBOX_MEMORY_LIMIT_MB=512
-LOG_LEVEL=info
-```
-
-### Configuration File
-
-Create `config.toml`:
-```toml
-[server]
-host = "0.0.0.0"
-port = 8070
-
-[sandbox]
-backend = "docker"  # or "nsjail"
-default_timeout_ms = 30000
-default_memory_limit_mb = 512
-max_concurrent_sandboxes = 10
-cleanup_interval_seconds = 300
-
-[logging]
-level = "info"
-format = "json"
-```
-
-Run with config file:
-```bash
-./target/release/sandbox-service --config config.toml
-```
-
-## API Reference
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Health check |
-| **Sandbox API** | | |
-| POST | `/sandbox` | Create sandbox |
-| GET | `/sandbox/{id}` | Get sandbox info |
-| DELETE | `/sandbox/{id}` | Delete sandbox |
-| POST | `/sandbox/{id}/execute` | Execute code in sandbox |
-| GET | `/sandboxes` | List all sandboxes |
-| **FaaS API** | | |
-| POST | `/faas/deploy` | Deploy serverless function |
-| GET | `/faas/deployments` | List all deployments |
-| GET | `/faas/deployments/{id}` | Get deployment info |
-| PUT | `/faas/deployments/{id}/files` | Update files in deployment |
-| DELETE | `/faas/deployments/{id}` | Undeploy function |
-| **Proxy API** | | |
-| ALL | `/proxy/{sandbox_id}/*` | Proxy to sandbox web service |
-| ALL | `/faas/{deployment_id}/*` | Proxy to FaaS deployment |
-
-### Request/Response Examples
-
-#### Create Sandbox Request
-```json
-{
-  "runtime": "node",
-  "code": "console.log('Hello World');",
-  "entry_point": "index.js",
-  "timeout_ms": 5000,
-  "memory_limit_mb": 128,
-  "env_vars": {
-    "NODE_ENV": "sandbox"
-  }
-}
-```
-
-#### Execute Response
-```json
-{
-  "sandbox_id": "123e4567-e89b-12d3-a456-426614174000",
-  "success": true,
-  "stdout": "Hello World\\n",
-  "stderr": "",
-  "exit_code": 0,
-  "execution_time_ms": 45
-}
-```
-
-## Security Features
-
-- **Network Isolation**: No network access from sandboxed code
-- **Filesystem Restrictions**: Read-only root filesystem with limited writable areas
-- **Memory Limits**: Configurable memory limits per sandbox
-- **CPU Limits**: CPU time restrictions to prevent resource exhaustion
-- **Timeout Protection**: Automatic termination of long-running processes
-- **Process Isolation**: Each sandbox runs in its own process namespace
-
-## Development
-
-### Building
-```bash
-cargo build
-```
-
-### Running Tests
+- All test files are in `tests/` (see above for advanced Bun/Node/TypeScript FaaS tests)
+- To run Rust tests:
 ```bash
 cargo test
-```
-
-### Features
-```bash
-# Build with Docker support
-cargo build --features docker
-
-# Build without Docker (nsjail only)
-cargo build --no-default-features
-```
-
-## Production Deployment
-
-### Docker Deployment
-```dockerfile
-FROM rust:1.70 as builder
-WORKDIR /app
-COPY . .
-RUN cargo build --release
-
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y nsjail && rm -rf /var/lib/apt/lists/*
-COPY --from=builder /app/target/release/sandbox-service /usr/local/bin/
-EXPOSE 8070
-CMD ["sandbox-service"]
-```
-
-### Systemd Service
-```ini
-[Unit]
-Description=Sandbox Service
-After=network.target
-
-[Service]
-Type=simple
-User=sandbox
-WorkingDirectory=/opt/sandbox-service
-ExecStart=/opt/sandbox-service/sandbox-service
-Restart=always
-RestartSec=10
-
-[Install]
-WantedBy=multi-user.target
-```
-
-## Performance Benchmarks
-
-### nsjail Backend
-- **Startup Time**: ~50ms per sandbox
-- **Memory Overhead**: ~10MB per sandbox
-- **Throughput**: 1000+ executions/second (depends on code complexity)
-
-### Docker Backend
-- **Startup Time**: ~200ms per sandbox
-- **Memory Overhead**: ~50MB per sandbox
-- **Throughput**: 500+ executions/second
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Docker daemon not running**: Start Docker service
-2. **Permission denied**: Ensure proper user permissions for Docker
-3. **nsjail not found**: Install nsjail or use Docker backend
-4. **Port already in use**: Change port in configuration
-
-### Logs
-```bash
-# Enable debug logging
-LOG_LEVEL=debug ./target/release/sandbox-service
-
-# JSON formatted logs
-LOG_FORMAT=json ./target/release/sandbox-service
 ```
 
 ## License

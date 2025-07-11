@@ -1,4 +1,7 @@
-# 🎯 **YOUR EXACT SOLUTION: TypeScript Project in Persistent Sandbox**
+# HOW TO USE
+
+This guide is now located in docs/.
+For quick start and advanced FaaS/Bun usage, see README.md and tests/.
 
 ## **✅ Complete Solution for Your Needs**
 
